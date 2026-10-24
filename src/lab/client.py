@@ -6,6 +6,7 @@ mcp-config, put/get of local files, and a local confirmation for delete."""
 import json
 import os
 import shlex
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -193,6 +194,29 @@ def cmd_delete(cfg, argv):
     return run_remote(cfg, ["delete", *argv]).returncode
 
 
+def cmd_check() -> int:
+    """Is this PC ready? Verifies what lab.exe ships with and what it needs from Windows. Exit code 0
+    unless something bundled is missing (a missing ssh or Tailscale is a warning, not a failure)."""
+    from . import __version__, distros, watch
+    rows = [
+        ("lab", f"{__version__}" + (" (packaged exe)" if getattr(sys, "frozen", False) else ""), True, True),
+        ("popup script", "bundled" if watch.SCRIPT.is_file() else "MISSING", watch.SCRIPT.is_file(), True),
+        ("distro catalogue", f"{len(distros.load(override=None))} distros", True, True),
+        ("OpenSSH client", shutil.which("ssh") or "not found: install it from Settings > Optional features", bool(shutil.which("ssh")), False),
+        ("Tailscale", shutil.which("tailscale") or "not found: https://tailscale.com/download", bool(shutil.which("tailscale")), False),
+    ]
+    try:
+        host = load_config()["host"]
+        rows.append(("host", f"{host} (settings found)", True, False))
+    except ClientError:
+        rows.append(("host", "not set up yet: run `lab connect`", False, False))
+    bad = 0
+    for name, text, ok, required in rows:
+        print(f"  {'ok  ' if ok else ('FAIL' if required else 'warn')} {name:<18} {text}")
+        bad += (not ok) and required
+    return 1 if bad else 0
+
+
 def remove_from_path(value: str, folder: str) -> str:
     """`value` (a ;-separated PATH) without `folder`, compared the way Windows does (case-insensitive)."""
     keep = [p for p in value.split(";") if p and p.rstrip("\\").lower() != folder.rstrip("\\").lower()]
@@ -227,6 +251,8 @@ def cmd_uninstall() -> int:
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     try:
+        if argv[:1] == ["check"]:
+            return cmd_check()
         if argv[:1] == ["uninstall"]:
             return cmd_uninstall()
         if argv[:1] in (["version"], ["--version"]):

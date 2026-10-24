@@ -1,6 +1,9 @@
 # Changelog
 
-## 0.1.0 (first release)
+## 0.1.1 (first release)
+
+The `v0.1.0` tag was never released: its Windows build failed a smoke test, which is fixed here.
+Also new: `lab check` (is this PC ready?), and `lab exec ... -- COMMAND` now works on Python 3.11.
 
 - Host: guided `lab setup`, `curl | bash` installer, `lab doctor`, base-image builder (Ubuntu 24.04 tested).
 - Projects: create, start, stop, restart, delete, protect; per-user quotas; DHCP or lab-assigned static addresses; VLAN tags.

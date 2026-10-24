@@ -213,6 +213,7 @@ The full design is in [docs/SPEC.md](docs/SPEC.md) and the feature list in [docs
 | `mcp-config` | Print the MCP config for Claude |
 | `put NAME LOCAL DST`, `get NAME SRC LOCAL` | Copy files (up to 4 MiB; use `scp` to `lab-NAME` for bigger ones) |
 | `watch [--install \| --uninstall \| --preview KIND]` | The approval popup helper |
+| `check` | Is this PC ready? Shows the bundled files, OpenSSH, Tailscale and your saved host |
 | `version`, `uninstall` | |
 </details>
 

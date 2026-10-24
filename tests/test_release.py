@@ -144,6 +144,17 @@ class SmallPiecesTest(unittest.TestCase):
         self.assertEqual(config_mod.Config().tailscale.base_tag, "tag:lab")
         self.assertEqual(tsacl.DEFAULT_BASE_TAG, "tag:lab")
 
+    def test_check_reports_what_ships_with_the_program(self):
+        out = __import__("io").StringIO()
+        with mock.patch("sys.stdout", out), mock.patch.object(client, "load_config", side_effect=client.ClientError("x")):
+            self.assertEqual(client.main(["check"]), 0)
+        text = out.getvalue()
+        self.assertIn("popup script", text)
+        self.assertIn("bundled", text)
+        self.assertIn("run `lab connect`", text)  # not set up is a hint, not a failure
+        with mock.patch.object(watch, "SCRIPT", Path("nope.ps1")), mock.patch("sys.stdout", __import__("io").StringIO()):
+            self.assertEqual(client.main(["check"]), 1)  # a missing bundled file is a failure
+
     def test_remove_from_path(self):
         self.assertEqual(client.remove_from_path(r"C:\a;C:\Users\x\lab\;C:\b", r"C:\USERS\x\lab"), r"C:\a;C:\b")
         self.assertEqual(client.remove_from_path(r"C:\a", r"C:\zzz"), r"C:\a")

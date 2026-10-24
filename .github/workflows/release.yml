@@ -44,7 +44,7 @@ jobs:
         shell: pwsh
         run: |
           ./dist/lab-windows-x64.exe version
-          ./dist/lab-windows-x64.exe distros
+          ./dist/lab-windows-x64.exe check
       - uses: actions/upload-artifact@v4
         with:
           name: lab-windows-x64
@@ -70,7 +70,7 @@ jobs:
         shell: pwsh
         run: |
           ./dist/lab-windows-arm64.exe version
-          ./dist/lab-windows-arm64.exe distros
+          ./dist/lab-windows-arm64.exe check
       - uses: actions/upload-artifact@v4
         with:
           name: lab-windows-arm64
