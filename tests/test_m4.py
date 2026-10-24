@@ -10,7 +10,7 @@ from lab import audit, client, entry
 from lab.access import Caller
 from lab.approvals import Approvals, fingerprint
 from lab.audit import AuditLog, redact
-from lab.cli import build_parser
+from lab.cli import build_parser, parse_args
 from lab.errors import PreconditionError, UsageError
 from lab.mcp import McpServer
 
@@ -539,8 +539,14 @@ class ToolBehaviourTest(ServerBase):
 
 class HumanCliTest(unittest.TestCase):
     def test_exec_arguments(self):
-        a = build_parser().parse_args(["exec", "api", "--timeout", "5", "--", "ls", "-l", "/tmp"])
-        self.assertEqual((a.cmd, a.name, a.argv[-3:], a.timeout), ("exec", "api", ["ls", "-l", "/tmp"], 5))
+        a = parse_args(["exec", "api", "--timeout", "5", "--", "ls", "-l", "/tmp"])
+        self.assertEqual((a.cmd, a.name, a.argv, a.timeout), ("exec", "api", ["ls", "-l", "/tmp"], 5))
+        # what comes after `--` belongs to the command, even if it looks like a lab option
+        a = parse_args(["--json", "exec", "api", "--root", "--", "ls", "--timeout", "9", "--json"])
+        self.assertEqual((a.json, a.root, a.timeout, a.argv), (True, True, 60, ["ls", "--timeout", "9", "--json"]))
+        a = parse_args(["exec", "api", "--", "echo", "a b"])
+        self.assertEqual(a.argv, ["echo", "a b"])
+        self.assertEqual(parse_args(["exec", "api", "uname"]).argv, ["uname"])  # no `--`: still accepted
         a = build_parser().parse_args(["approve", "ab12cd", "--deny"])
         self.assertEqual((a.cmd, a.id, a.deny), ("approve", "ab12cd", True))
         self.assertEqual(build_parser().parse_args(["mcp"]).cmd, "mcp")

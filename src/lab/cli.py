@@ -377,8 +377,25 @@ def cmd_user(ctx):
     return 0
 
 
-def main(argv=None) -> int:
+def parse_args(argv):
+    """Parse the command line. For `lab exec NAME [options] -- COMMAND...` everything after the first
+    `--` is the command, taken before argparse sees it: argparse before Python 3.12 rejects options
+    followed by `--` and a command, and the command must never be interpreted as lab options."""
+    argv = list(argv)
+    rest = None
+    if "exec" in argv:
+        start = argv.index("exec")
+        if "--" in argv[start:]:
+            cut = argv.index("--", start)
+            argv, rest = argv[:cut], argv[cut + 1:]
     args = build_parser().parse_args(argv)
+    if rest is not None:
+        args.argv = rest
+    return args
+
+
+def main(argv=None) -> int:
+    args = parse_args(sys.argv[1:] if argv is None else argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(message)s")
     ctx, ok = None, False
     try:
