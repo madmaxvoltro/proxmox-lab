@@ -20,6 +20,7 @@ make_release() {  # <tag>: four fake builds (tiny scripts that answer `version` 
   mkdir -p "$dir" "$WORK/srv/api/releases"
   : > "$dir/SHA256SUMS"
   for asset in lab-linux-x64 lab-linux-arm64 lab-macos-x64 lab-macos-arm64; do
+    # shellcheck disable=SC2016
     printf '#!/bin/sh\ncase "$1" in version) echo "lab %s %s";; uninstall) echo "fake uninstall";; *) echo "args: $*";; esac\n' "$tag" "$asset" > "$dir/$asset"
     printf '%s  %s\n' "$(sha "$dir/$asset")" "$asset" >> "$dir/SHA256SUMS"
   done
@@ -36,7 +37,7 @@ export LAB_BIN_DIR="$WORK/bin" LAB_API_URL="http://127.0.0.1:$PORT/api" LAB_DOWN
 # 1. each supported system gets its own build
 for combo in "linux x86_64 lab-linux-x64" "linux aarch64 lab-linux-arm64" "macos x86_64 lab-macos-x64" "macos arm64 lab-macos-arm64"; do
   read -r os arch asset <<<"$combo"
-  rm -rf "$WORK/bin"
+  rm -rf "${WORK:?}/bin"
   LAB_OS="$os" LAB_ARCH="$arch" bash "$HERE/install-client.sh" --no-connect >"$WORK/out.txt" 2>&1 || { cat "$WORK/out.txt"; fail "install for $os/$arch"; }
   "$WORK/bin/lab" version | grep -q "$asset" || fail "$os/$arch did not get $asset"
   grep -q "checksum verified" "$WORK/out.txt" || fail "checksum not verified for $os/$arch"

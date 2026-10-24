@@ -151,9 +151,12 @@ class SmallPiecesTest(unittest.TestCase):
         text = out.getvalue()
         self.assertIn("approval popup", text)
         self.assertIn("run `lab connect`", text)  # not set up is a hint, not a failure
-        with mock.patch.object(sys, "platform", "win32"), mock.patch.object(watch, "SCRIPT", Path("nope.ps1")), \
+        with mock.patch.object(watch, "SCRIPT", Path("nope.ps1")):
+            row = client.popup_row(watch, "win32")
+            self.assertEqual((row[2], row[3]), (False, True))  # on Windows a missing popup file is a required failure
+        with mock.patch.object(client, "popup_row", return_value=("approval popup", "MISSING", False, True)), \
                 mock.patch("sys.stdout", __import__("io").StringIO()):
-            self.assertEqual(client.main(["check"]), 1)  # a missing bundled popup file is a failure on Windows
+            self.assertEqual(client.main(["check"]), 1)  # ... and it fails the check
 
     def test_remove_from_path(self):
         self.assertEqual(client.remove_from_path(r"C:\a;C:\Users\x\lab\;C:\b", r"C:\USERS\x\lab"), r"C:\a;C:\b")

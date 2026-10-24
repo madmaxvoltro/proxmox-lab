@@ -15,6 +15,7 @@ from . import client, watch
 from .client import ClientError
 
 BACKUP_SUFFIX = ".lab-backup"
+DETACHED_PROCESS, CREATE_NO_WINDOW = 0x00000008, 0x08000000  # Windows process-creation flags
 WINDOWS_SSH = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "OpenSSH" / "ssh.exe"
 
 
@@ -163,7 +164,7 @@ def run(argv: list, *, ask=input, say=print, env=os.environ, load=client.load_co
         if sys.platform != "darwin":  # on macOS the LaunchAgent has already started it
             subprocess.Popen(watch.launcher_args(), close_fds=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                              stderr=subprocess.DEVNULL,
-                             **({"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW}
+                             **({"creationflags": DETACHED_PROCESS | CREATE_NO_WINDOW}
                                 if sys.platform == "win32" else {"start_new_session": True}))
         say(f"  installed ({print_path.name}) and running.")
 

@@ -194,12 +194,13 @@ def cmd_delete(cfg, argv):
     return run_remote(cfg, ["delete", *argv]).returncode
 
 
-def popup_row(watch) -> tuple:
+def popup_row(watch, platform: str | None = None) -> tuple:
     """How approvals will be shown on this computer (the blurred card needs the bundled script on Windows)."""
-    if sys.platform == "win32":
+    platform = platform or sys.platform
+    if platform == "win32":
         ok = watch.SCRIPT.is_file()
         return ("approval popup", "bundled" if ok else "MISSING", ok, True)
-    if sys.platform == "darwin":
+    if platform == "darwin":
         found = shutil.which("osascript")
         return ("approval popup", "native macOS dialog" if found else "osascript not found", bool(found), False)
     tool = shutil.which("zenity") or shutil.which("kdialog")

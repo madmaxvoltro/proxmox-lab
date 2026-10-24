@@ -321,15 +321,20 @@ class PopupLauncherTest(unittest.TestCase):
 
 class FallbackTest(unittest.TestCase):
     def test_plain_window_is_used_when_the_native_popup_fails(self):
-        real_popup, real_dialog, real_log = watch.show_popup, watch.show_dialog, watch.log
+        names = ("show_popup", "show_macos", "show_linux", "show_dialog", "log")
+        real = {n: getattr(watch, n) for n in names}
         calls = []
-        watch.show_popup = lambda item, alive, **k: (_ for _ in ()).throw(watch.PopupError("no powershell"))
+
+        def boom(item, alive, **k):
+            raise watch.PopupError("no native dialog")
+        watch.show_popup = watch.show_macos = watch.show_linux = boom  # whichever platform this runs on
         watch.show_dialog = lambda item, alive: calls.append("tk") or True
         watch.log = lambda m, *a: calls.append(m)
         try:
             self.assertTrue(watch.show_best(watch.SAMPLES["enter"], lambda: True))
         finally:
-            watch.show_popup, watch.show_dialog, watch.log = real_popup, real_dialog, real_log
+            for n, fn in real.items():
+                setattr(watch, n, fn)
         self.assertEqual(calls[-1], "tk")
         self.assertIn("native popup unavailable", calls[0])
 
