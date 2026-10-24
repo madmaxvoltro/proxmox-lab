@@ -51,8 +51,16 @@ def remote_argv(cfg: dict, args: list, *, tty: bool = False, extra: list | None 
     return ["ssh", "-t" if tty else "-T", *(extra or []), target(cfg), shlex.join(["lab", *args])]
 
 
+def wants_tty(argv: list, stdin_tty: bool, stdout_tty: bool) -> bool:
+    """Give the host a terminal (so it draws its live progress window) when you are at one yourself.
+    Never for machine-readable or binary traffic: --json, put/get (file bytes), exec, mcp."""
+    cmd = next((a for a in argv if not a.startswith("-")), "")
+    return bool(stdin_tty and stdout_tty and cmd and "--json" not in argv and cmd not in ("put", "get", "mcp", "exec"))
+
+
 def run_remote(cfg, args, *, stdin=None, stdout=None, capture=False, tty=False):
-    cmd = remote_argv(cfg, args, tty=tty)
+    # with a terminal ssh would print "Connection to host closed."; LogLevel=ERROR keeps real errors only
+    cmd = remote_argv(cfg, args, tty=tty, extra=["-o", "LogLevel=ERROR"] if tty else None)
     if capture:
         return subprocess.run(cmd, capture_output=True, text=True, stdin=stdin)
     return subprocess.run(cmd, stdin=stdin, stdout=stdout)
@@ -191,6 +199,9 @@ def main(argv=None) -> int:
         if argv[:1] == ["setup"]:
             return cmd_setup(argv[1:])
         cfg = load_config()
+        if argv[:1] == ["watch"]:
+            from . import watch
+            return watch.main(cfg, argv[1:])
         if argv[:1] == ["ssh"]:
             return cmd_ssh(cfg, argv[1:])
         if argv[:1] == ["ssh-config"]:
@@ -203,9 +214,8 @@ def main(argv=None) -> int:
             return cmd_get(cfg, argv[1:])
         if argv[:1] == ["delete"]:
             return cmd_delete(cfg, argv[1:])
-        # everything else runs on the host; give it a terminal only for interactive commands
-        tty = sys.stdin.isatty() and bool(argv) and argv[0] in ("init", "approve", "template")
-        return run_remote(cfg, argv, tty=tty).returncode
+        # everything else runs on the host; at a real terminal it gets one too, so progress is live
+        return run_remote(cfg, argv, tty=wants_tty(argv, sys.stdin.isatty(), sys.stdout.isatty())).returncode
     except ClientError as e:
         print(f"error: {e}", file=sys.stderr)
         return 3

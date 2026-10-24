@@ -21,6 +21,7 @@ import time
 from collections import deque
 
 _PCT = re.compile(r"(\d{1,3}(?:\.\d+)?)\s*%")
+_NOISE = re.compile(r"^(Logical volume \S+ (created|changed|successfully resized)\.?|Rounding up size .*)$")
 WINDOW = 4
 
 
@@ -49,6 +50,7 @@ class Reporter:
         self.details = deque(maxlen=WINDOW)  # [(key, text)]
         self.pct = None
         self.t0 = 0.0
+        self.warnings = {}  # normalised text -> first occurrence
         self._last_decile = -1
         self._last_wait_print = -1e9
 
@@ -71,6 +73,11 @@ class Reporter:
     def finish(self, ok: bool = True) -> None:
         with self.lock:
             self._end(ok)
+            if self.warnings:
+                for text in self.warnings.values():
+                    self.stream.write(f"note: {text.removeprefix('WARNING:').strip()}\n")
+                self.stream.flush()
+                self.warnings = {}
 
     def _end(self, ok: bool) -> None:
         if self.title is None:
@@ -110,9 +117,13 @@ class Reporter:
 
     def line(self, raw: str) -> None:
         """A line of command output (vzdump, qmrestore, qm clone ...). Progress lines update the
-        percentage and replace each other; anything else scrolls through the window."""
+        percentage and replace each other; anything else scrolls through the window. Routine
+        storage chatter is dropped and warnings are collected and shown once, at the end."""
         raw = (raw or "").strip()
-        if not raw:
+        if not raw or _NOISE.match(raw):
+            return
+        if raw.startswith("WARNING"):
+            self.warnings.setdefault(re.sub(r"[\d.]+", "#", raw), raw)
             return
         m = _PCT.search(raw)
         if m and float(m.group(1)) <= 100:

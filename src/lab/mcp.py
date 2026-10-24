@@ -61,8 +61,10 @@ class Tool:
 
 
 class McpServer:
-    def __init__(self, lab, cfg, db, audit: AuditLog, inp, out, *, session: str | None = None, clock=time.time):
+    def __init__(self, lab, cfg, db, audit: AuditLog, inp, out, *, session: str | None = None, clock=time.time,
+                 sleep=time.sleep):
         self.lab, self.cfg, self.db, self.audit, self.inp, self.out = lab, cfg, db, audit, inp, out
+        self.sleep = sleep
         self.caller = lab.caller
         self.session = session or secrets.token_hex(4)
         self.clock = clock
@@ -116,6 +118,14 @@ class McpServer:
             if method == "initialize":
                 p = msg.get("params") or {}
                 self.elicitation = "elicitation" in (p.get("capabilities") or {})
+                info = p.get("clientInfo") or {}
+                try:  # lets the admin see what this client supports (e.g. whether it can show approval prompts)
+                    self.audit.write(phase="session", session=self.session, user=self.caller.name,
+                                     client=f"{info.get('name')} {info.get('version')}",
+                                     capabilities=sorted(p.get("capabilities") or {}), elicitation=self.elicitation,
+                                     watcher=self._watcher_online())
+                except AuditError as e:
+                    log.error("%s", e)
                 want = p.get("protocolVersion")
                 self._reply(mid, {"protocolVersion": want if want in PROTOCOLS else PROTOCOLS[0],
                                   "capabilities": {"tools": {"listChanged": False}},
@@ -213,7 +223,25 @@ class McpServer:
             return
         if answer is False:
             raise ApprovalDenied(f"the user declined: {plan}")
-        raise ApprovalRequired(self.approvals.request(tool, project, args, plan, self.session), plan)
+        aid = self.approvals.request(tool, project, args, plan, self.session)
+        if self._watcher_online():
+            # a popup is on the user's screen: hold this call until they click (or the wait runs out)
+            deadline = self.clock() + self.cfg.mcp.approval_wait_s
+            while self.clock() < deadline:
+                self.sleep(1)
+                state = self.db.approval_get(aid)["status"]
+                if state == "denied":
+                    raise ApprovalDenied(f"the user denied: {plan}")
+                if state == "approved":
+                    row = self.approvals.take(tool, project, args)
+                    if row:
+                        self._approver = row["decided_by"]
+                        return
+        raise ApprovalRequired(aid, plan)
+
+    def _watcher_online(self) -> bool:
+        age = self.db.heartbeat_age("approver", self.caller.name, self.clock())
+        return age is not None and age < 20
 
     def _row(self, name: str):
         return self.lab._mine(name)  # same "no such project" for missing and not-yours

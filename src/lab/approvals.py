@@ -19,8 +19,9 @@ class ApprovalRequired(AccessError):
         self.approval_id, self.plan = approval_id, plan
         super().__init__(
             f"APPROVAL REQUIRED ({approval_id}): {plan}\n"
-            f"Ask the user to run `lab approve {approval_id}` in a terminal on the host, then repeat "
-            "exactly the same call. Do not attempt anything else to get around this.")
+            f"Tell the user to approve it (a popup appears on their PC if the lab watcher is running; otherwise "
+            f"they run `lab approve {approval_id}` in a terminal), then repeat exactly the same call. "
+            "Do not attempt anything else to get around this.")
 
 
 class ApprovalDenied(AccessError):

@@ -101,6 +101,7 @@ class MCP:
     max_output_bytes: int = 65536      # per stream returned to the model
     max_file_bytes: int = 4 << 20      # file read/write through the guest agent
     approval_ttl_s: int = 600
+    approval_wait_s: int = 50          # a gated call waits this long for a click when the desktop helper is running
 
 
 @dataclass

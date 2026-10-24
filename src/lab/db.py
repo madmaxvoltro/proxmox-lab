@@ -91,6 +91,15 @@ _MIGRATIONS = [
     ALTER TABLE projects ADD COLUMN static_ip TEXT;
     CREATE UNIQUE INDEX projects_static_ip ON projects(static_ip);
     """,
+    # v4: liveness of the desktop approval helper (`lab watch`), so the MCP server knows whether to wait for a click
+    """
+    CREATE TABLE heartbeat (
+        name    TEXT NOT NULL,
+        user    TEXT NOT NULL,
+        seen_at REAL NOT NULL,
+        PRIMARY KEY (name, user)
+    );
+    """,
 ]
 
 
@@ -266,6 +275,15 @@ class DB:
                 "expires_at,decided_by,decided_at,used_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (id, user, session, tool, project, fingerprint, plan, status, now, now + ttl, decided_by,
                  now if decided_by else None, now if status == "used" else None))
+
+    def heartbeat(self, name: str, user: str, now: float) -> None:
+        with self.tx():
+            self.conn.execute("INSERT INTO heartbeat(name,user,seen_at) VALUES (?,?,?) "
+                              "ON CONFLICT(name,user) DO UPDATE SET seen_at=excluded.seen_at", (name, user, now))
+
+    def heartbeat_age(self, name: str, user: str, now: float) -> float | None:
+        row = self.conn.execute("SELECT seen_at FROM heartbeat WHERE name=? AND user=?", (name, user)).fetchone()
+        return None if row is None else now - row[0]
 
     def approval_get(self, id: str):
         return self.conn.execute("SELECT * FROM approvals WHERE id=?", (id,)).fetchone()

@@ -82,7 +82,11 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("id")
     ap.add_argument("--deny", action="store_true")
     ap.add_argument("--yes", action="store_true", help="do not ask for confirmation")
-    sub.add_parser("approvals", help="list approvals").add_argument("--all", action="store_true")
+    al = sub.add_parser("approvals", help="list approvals")
+    al.add_argument("--all", action="store_true")
+    al.add_argument("--pending", action="store_true", help="only approvals waiting for a decision")
+    al.add_argument("--heartbeat", action="store_true",
+                    help="(desktop helper) record that an approver is watching, so AI calls wait for a click")
     sub.add_parser("mcp", help="MCP stdio server; launched by the client over SSH")
     ar = sub.add_parser("archive", help="back up to the archive disk, verify, then free the fast disk")
     ar.add_argument("name")
@@ -318,11 +322,15 @@ def cmd_approvals(ctx):
     caller, db = ctx.caller(), ctx.db()
     ap = Approvals(db, ctx.cfg.mcp.approval_ttl_s, caller.name)
     if a.cmd == "approvals":
-        now = time.time()
+        now = getattr(ctx, "clock", time.time)()
+        if a.heartbeat:
+            db.heartbeat("approver", caller.name, now)
         rows = db.approval_list(None if (a.all and caller.is_admin) else caller.name)
         out = [{"id": r["id"], "user": r["user"], "tool": r["tool"], "project": r["project"],
-                "state": state_of(r, now), "plan": r["plan"][:70]} for r in rows]
-        _emit(a, out, _table(out, ["id", "user", "tool", "project", "state", "plan"]))
+                "state": state_of(r, now), "plan": r["plan"], "expires_in": max(0, int(r["expires_at"] - now))}
+               for r in rows if not a.pending or state_of(r, now) == "pending"]
+        shown = [{**o, "plan": o["plan"][:70]} for o in out]
+        _emit(a, out, _table(shown, ["id", "user", "tool", "project", "state", "plan"]))
         return 0
     row = db.approval_get(a.id)
     if row is None or not (caller.is_admin or row["user"] == caller.name):
