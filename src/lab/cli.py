@@ -241,6 +241,12 @@ def _table(rows, cols):
     return "\n".join([line(cols)] + [line([r.get(c) if r.get(c) is not None else "-" for c in cols]) for r in rows])
 
 
+def _one_line(res: dict) -> str:
+    """`hello: running (lab-hello.tail1234.ts.net, 100.64.0.5)` for start/stop/restart."""
+    where = ", ".join(x for x in (res.get("tailnet_name"), res.get("tailnet_ip")) if x and res["state"] == "running")
+    return f"{res['name']}: {res['state']}" + (f" ({where})" if where else "")
+
+
 def cmd_project(ctx):
     a = ctx.args
     lab = ctx.lab()
@@ -256,7 +262,7 @@ def cmd_project(ctx):
     elif a.cmd in ("status", "start", "stop", "restart"):
         fn = {"status": lab.status, "start": lab.start}.get(a.cmd)
         res = fn(a.name) if fn else getattr(lab, a.cmd)(a.name, force=a.force)
-        _emit(a, res, json.dumps(res, indent=2, default=str))
+        _emit(a, res, json.dumps(res, indent=2, default=str) if a.cmd == "status" else _one_line(res))
     elif a.cmd == "delete":
         confirm = a.name if a.yes else input(f"Type the project name ({a.name}) to confirm deletion: ").strip()
         lab.delete(a.name, confirm, force=a.force, archives=a.archives)

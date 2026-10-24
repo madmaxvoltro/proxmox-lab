@@ -446,6 +446,16 @@ class WiringTest(Base):
         self.assertIn("FAILED: Trial restore", self.out.getvalue())
 
 
+class OneLineTest(unittest.TestCase):
+    def test_start_stop_summary(self):
+        from lab.cli import _one_line
+        run = {"name": "hello", "state": "running", "tailnet_name": "lab-hello.t.ts.net", "tailnet_ip": "100.64.0.5"}
+        self.assertEqual(_one_line(run), "hello: running (lab-hello.t.ts.net, 100.64.0.5)")
+        self.assertEqual(_one_line({**run, "state": "stopped", "tailnet_ip": None}), "hello: stopped")
+        self.assertEqual(_one_line({"name": "x", "state": "running", "tailnet_name": None, "tailnet_ip": None}),
+                         "x: running")
+
+
 class InterruptTest(unittest.TestCase):
     def test_ctrl_c_exits_cleanly_without_a_traceback(self):
         from lab import cli
