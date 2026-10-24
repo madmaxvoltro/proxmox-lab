@@ -1,6 +1,6 @@
 # lab — Project Lab for Proxmox: Specification
 
-Status: **draft v0.1** — decisions below come from the scoping Q&A; open items are in §13.
+Status: **draft v0.2** — decisions below come from the scoping Q&A; open items are in §15.
 
 ## 1. Goal
 
@@ -58,10 +58,19 @@ bridge       = "<discovered>"
 [vm]
 vmid_range   = [1000, 1999]
 template_id  = 9000
-default_cores  = 4
-default_memory = 4096
+default_distro = "ubuntu-24.04"
+default_cores  = 1
+default_memory = 2048
 default_disk   = "32G"
 clone_mode   = "full"        # full | linked, overridable per project
+[presets]                    # --size NAME
+small  = { cpu = 1, ram = "2G",  disk = "32G" }
+medium = { cpu = 4, ram = "8G",  disk = "48G" }
+large  = { cpu = 8, ram = "16G", disk = "64G" }
+[mcp]
+max_cpu = 8
+max_ram = "16G"
+max_running_vms = 6          # creates beyond these need human approval
 [archive]
 keep         = 1
 [tailscale]
@@ -90,9 +99,11 @@ enabled = false
 
 ## 6. Golden template and profiles
 
-- Ubuntu 24.04 LTS cloud image (pinned dated release, checksum verified).
-- Preinstalled: openssh-server, qemu-guest-agent, tailscale (installed, **not** authenticated), git, curl, wget, ca-certificates, build-essential, pkg-config, python3/pip/venv, nodejs/npm.
-- Defaults: 4 vCPU, 4096 MB, 32 GB, virtio, discard/ssd flags, serial console.
+- **Distros** (`--distro`, default `ubuntu-24.04`): `ubuntu-22.04`, `ubuntu-24.04`, `ubuntu-26.04`, `debian-12`, `debian-13`, `fedora-<current>`, `rocky-9`/`almalinux-9`. Official cloud images, pinned dated release, checksum verified. Defined in `distros.toml` (image URL, checksum URL, package manager family, default login user, template ID), so adding one is a data change.
+- **Lazy templates**: the first `lab create --distro X` builds template `lab-tpl-X` (1–2 minutes) if missing, then reuses it. `lab template list|add|update|rm` manage them. Template IDs come from a reserved range, never hard-coded.
+- Preinstalled in every template: openssh-server, qemu-guest-agent, tailscale (installed, **not** authenticated), git, curl, wget, ca-certificates, build tools (build-essential / "Development Tools"), python3/pip/venv, nodejs/npm. Package names are mapped per family (apt / dnf).
+- Template disk is 32 GB; larger `--disk` is applied by `qm resize` plus cloud-init growpart at create. Shrinking is rejected. `lab resize NAME --disk/--cpu/--ram` handles live growth later.
+- Template hardware: virtio, discard/ssd flags, serial console. Per-project defaults are 1 vCPU / 2 GB (see config).
 - Generalised before templating (cloud-init clean, machine-id, SSH host keys, tailscale state removed).
 - `lab template update`: builds a new dated template from a temp clone, tests it, swaps `template_id`; existing projects untouched (full clones) or flagged as dependent (linked clones).
 
@@ -115,7 +126,7 @@ Modules are pinned in the tool (docker, go, rust, uv, …), not arbitrary downlo
 | Command | Behaviour |
 |---|---|
 | `lab init` / `lab doctor` | §5 |
-| `lab create NAME [--profile P] [--cores N --memory MB --disk G] [--full\|--linked] [--repo URL] [--from PATH] [--no-setup]` | Validate name, allocate VMID, clone, configure cloud-init, start, enrol on Tailscale, run auto-setup (§8), register in DB, write client SSH config, print `ssh` line. |
+| `lab create NAME [--distro D] [--size small\|medium\|large] [--cpu N --ram 8G --disk 64G] [--profile P] [--full\|--linked] [--repo URL] [--from PATH] [--no-setup]` (defaults 1 vCPU / 2G / 32G, ubuntu-24.04) | Validate name, allocate VMID, clone, configure cloud-init, start, enrol on Tailscale, run auto-setup (§8), register in DB, write client SSH config, print `ssh` line. |
 | `lab list [--json]` | Name, VMID, state (running/stopped/archived), tailnet IP/name, fast/archive, size, last backup, last active. |
 | `lab status NAME` | Resources, disk use, uptime, tailnet status, archive info. |
 | `lab ssh NAME` | Client: connects via tailnet name (Tailscale SSH). Falls back to host jump if needed. |
@@ -125,7 +136,11 @@ Modules are pinned in the tool (docker, go, rust, uv, …), not arbitrary downlo
 | `lab archive NAME` | §10. |
 | `lab restore NAME [--start]` | §11. |
 | `lab delete NAME` | Typed-name confirmation; removes tailnet device, VM, and (with `--archives`) its archive. |
-| `lab template update` | §6 |
+| `lab resize NAME [--cpu --ram --disk]` | Grow resources (disk grow only). |
+| `lab exec NAME -- CMD`, `lab put/get NAME SRC DST` | Run a command / copy files in a project VM (also the basis of the MCP tools). |
+| `lab template list\|add\|update\|rm` | §6 |
+| `lab protect NAME` / `lab unprotect NAME` | Mark a project protected (§16). |
+| `lab mcp` | Start the stdio MCP server (§16). |
 | `lab idle check` | Run by timer; stops idle projects (§12). |
 | `lab config`, `lab profiles` | Show config / list profiles. |
 
@@ -143,7 +158,7 @@ Always overridable with `--no-setup`. Runs only inside the VM (isolation is the 
 
 ## 9. Tailscale lifecycle
 
-Decisions: ephemeral, tagged (`tag:project-lab`), reusable pre-approved auth key delivered via cloud-init; join with `tailscale up --ssh --hostname lab-NAME`. No SSH keys to manage; access governed by tailnet ACL `ssh` rules.
+Decisions: ephemeral, tagged (`tag:project-lab`), reusable pre-approved auth key delivered at runtime through the QEMU guest agent (`qm guest exec --pass-stdin`), not cloud-init (decision Q1); join with `tailscale up --ssh --hostname lab-NAME`. No SSH keys to manage; access governed by tailnet ACL `ssh` rules.
 
 | Event | Action |
 |---|---|
@@ -156,7 +171,7 @@ Decisions: ephemeral, tagged (`tag:project-lab`), reusable pre-approved auth key
 
 **Important caveat** — ephemeral nodes are removed by Tailscale after being offline ~30–60 min, so a stopped VM loses its tailnet identity anyway. Plan: treat `stop` as `logout` too (clean and deterministic), and re-enrol on `start`. Hostname collisions (`lab-x-1`) are avoided by logging out cleanly first. Consequence: the tailnet IP may change across stop/start; always use the MagicDNS name.
 
-**Key handling**: the key lives only in `/etc/project-lab/ts-authkey` (0600 root). Cloud-init delivery means the key sits in the VM's cloud-init seed; mitigations: scrub user-data after first boot, detach the cloud-init drive's custom snippet, key expiry kept short, key never in the golden template or in backups taken after scrub. See open question Q1.
+**Key handling**: the key lives only in `/etc/project-lab/ts-authkey` (0600 root) on the host. Enrolment is: wait for guest agent → `qm guest exec <vmid> --pass-stdin -- tailscale up --auth-key=file:/dev/stdin --ssh --hostname lab-NAME`, with the key piped on stdin. It never goes in argv, cloud-init user-data, the seed image, the template, the VM filesystem, logs or backups. Cloud-init still handles hostname, user, resize, profile packages and setup. The same path is used for create, start and restore. Requires the guest agent in every template (it is).
 
 ## 10. Archive (one command, verified, auto-rollback)
 
@@ -206,9 +221,46 @@ Flags: `--keep-active` (verify only, don't remove), `--no-boot-test` (discourage
 
 ## 15. Open questions
 
-- **Q1 Key delivery**: cloud-init is your choice and is in the spec. Because user-data persists in the seed image/backups, the alternative is injecting the key at runtime with `qm guest exec --pass-stdin` (never written to the VM or seed) — also needed anyway for re-enrolment on `start`. Recommend using guest-exec for the key, cloud-init for everything else. Decide before implementation.
+- ~~Q1 Key delivery~~ — **decided**: guest-agent stdin (§9).
 - **Q2** Tailscale ACL: do you already have `tagOwners` for `tag:project-lab` and an `ssh` rule allowing your user → that tag?
 - **Q3** Default VM login user name (`ubuntu`, or your name) and where your SSH/Tailscale SSH identity comes from.
 - **Q4** Dotfiles repo URL and GitHub auth method (deploy key per project vs. `gh auth` token).
 - **Q5** Idle thresholds (days, CPU %).
 - **Q6** Whether the thin client should also support macOS/Linux (spec assumes Windows only).
+- **Q7** MCP "enter another project" approval: delivered how? (MCP elicitation prompt if the client supports it, else a pending-approval queue answered with `lab approve ID` from a terminal.) Proposed: both, elicitation first.
+- **Q8** How the AI executes in VMs: guest agent (works before Tailscale is up, no network needed) vs. Tailscale SSH (real shell/PTY, streaming). Proposed: guest agent for one-shot commands and file transfer, SSH for interactive/long-running.
+- **Q9** Per-family package maps for profiles (apt vs dnf) — how far to go in v1 (proposed: only the base packages and the docker/go/rust/uv modules).
+
+## 16. MCP server (`lab mcp`)
+
+**Transport**: stdio, launched by the MCP client (Claude Desktop / Claude Code) on the Windows PC. It uses the thin client's SSH-over-tailnet transport to the host; nothing new listens anywhere. All host calls use `lab ... --json`.
+
+**Trust model**: the AI gets a full shell **inside project VMs** (they are the sandbox) and lifecycle control, but **never a shell on the Proxmox host**. There is no host-exec, no raw `qm`, no arbitrary file access outside a VM. The MCP layer calls the same code paths as the CLI; it adds no extra Proxmox privileges.
+
+**Tools**
+
+| Tool | Notes |
+|---|---|
+| `lab_list`, `lab_status` | read-only; protected projects appear as `protected` with no detail |
+| `lab_create` | distro, size/cpu/ram/disk, profile, repo; returns tailnet name |
+| `lab_start`, `lab_stop`, `lab_restart`, `lab_resize` | |
+| `lab_snapshot`, `lab_rollback`, `lab_clone` | |
+| `lab_archive`, `lab_restore`, `lab_delete` | approval required (below) |
+| `lab_exec` | run a command in a VM as the project user; stdout/stderr/exit code; timeout; optional background job id + `lab_exec_poll` / `lab_exec_cancel` |
+| `lab_exec` with `sudo`/root | approval required |
+| `lab_read_file`, `lab_write_file`, `lab_upload`, `lab_download` | limits on size |
+| `lab_logs` | host-side operation log and VM setup log |
+| `lab_approvals` | list/inspect pending approvals |
+
+**Approvals** — a tool call that needs one returns/prompts for confirmation with a plain-language plan (what will happen, what is destroyed) and runs only after a human approves. Required for:
+1. `delete` (VM and archives)
+2. `archive` and `restore`
+3. any `sudo`/root command in a VM
+4. `create` beyond the caps in `[mcp]` (cpu, ram, running VM count)
+5. **entering another project**: a session is bound to the project(s) it created or was explicitly attached to (`lab_attach`); first exec/read/write in any other project asks for permission. Approval is per project per session.
+
+**Protected projects** (`lab protect`): invisible to destructive tools and exec; any access needs explicit human approval regardless of session binding.
+
+Approval delivery: MCP elicitation where the client supports it, otherwise the call fails with an approval ID and the human runs `lab approve ID` in a terminal (Q7). Approvals expire (default 10 min), are single-use, and are bound to the exact action and arguments.
+
+**Audit**: every MCP call (tool, args with secrets redacted, project, result, approver) is appended to `/var/log/project-lab/mcp-audit.log` on the host. Output returned to the model is size-capped; the Tailscale key and config secrets are never exposed by any tool.

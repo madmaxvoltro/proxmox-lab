@@ -14,6 +14,27 @@ Legend: **P0** must for v1 · **P1** v1 if time allows · **P2** later · ⚠ ha
 | F07 | `clone` project → project | P1 |
 | F08 | `snap` / `rollback` / `snaps` | P1 |
 
+| F09 | Defaults 1 vCPU / 2 GB / 32 GB; `--cpu --ram --disk` and `--size small\|medium\|large` presets | P0 |
+| F10 | `--distro` (ubuntu 22.04/24.04/26.04, debian 12/13, fedora, rocky/alma), data-driven `distros.toml` | P0 |
+| F11 | Lazy per-distro template build on first use; `template list\|add\|update\|rm` | P0 |
+| F12 | Disk grow at create and `lab resize` (grow only) | P1 |
+| F13 | `lab exec` / `put` / `get` into project VMs | P0 |
+
+## MCP server
+| ID | Feature | Pri |
+|---|---|---|
+| M01 | `lab mcp` stdio server over the client's SSH transport, no listening port | P0 |
+| M02 | Lifecycle tools (list/status/create/start/stop/resize/snap/clone) | P0 |
+| M03 | `lab_exec` in VMs as project user, timeouts, background jobs + poll/cancel | P0 |
+| M04 | File tools: read/write/upload/download with size limits | P0 |
+| M05 | Approval gates: delete, archive/restore, sudo/root, create over caps | P0 |
+| M06 | Project-bound sessions; entering another project needs approval (`lab_attach`) ⚠Q7 | P0 |
+| M07 | `protect` / `unprotect`; protected projects hidden from destructive/exec tools | P0 |
+| M08 | Audit log of every MCP call, secrets redacted | P0 |
+| M09 | No host shell, no raw `qm`; Tailscale key never exposed | P0 |
+| M10 | Guest-agent vs SSH execution split ⚠Q8 | P1 |
+| M11 | Streamable HTTP transport for remote clients | P2 |
+
 ## Archive & restore
 | ID | Feature | Pri |
 |---|---|---|
@@ -30,7 +51,7 @@ Legend: **P0** must for v1 · **P1** v1 if time allows · **P2** later · ⚠ ha
 ## Tailscale
 | ID | Feature | Pri |
 |---|---|---|
-| T01 | Ephemeral tagged auth key, `tailscale up --ssh --hostname lab-NAME` ⚠Q1 | P0 |
+| T01 | Ephemeral tagged auth key piped via guest-agent stdin, `tailscale up --ssh --hostname lab-NAME` | P0 |
 | T02 | Record tailnet IP + MagicDNS name | P0 |
 | T03 | Logout before archive/delete/stop; re-enrol on start/restore | P0 |
 | T04 | ACL/tag prerequisite check with fix-it snippet ⚠Q2 | P1 |
@@ -67,7 +88,7 @@ Legend: **P0** must for v1 · **P1** v1 if time allows · **P2** later · ⚠ ha
 | R03 | Notification hook (command/webhook) | P2 |
 
 ## Later / out of scope for v1
-LXC backend (`--type lxc`), web dashboard / HTTP API, multi-node, template per profile, scheduled archive suggestions ("untouched 30 days"), off-box copy of archives (a single archive disk is not disaster recovery).
+LXC backend (`--type lxc`), web dashboard / HTTP API, Arch/Alpine distros, multi-node, template per profile, scheduled archive suggestions ("untouched 30 days"), off-box copy of archives (a single archive disk is not disaster recovery).
 
 ## Milestones
 1. **M0 Skeleton** — repo, config, DB, Proxmox wrapper with dry-run mode, test harness with fake `qm`.
@@ -75,5 +96,6 @@ LXC backend (`--type lxc`), web dashboard / HTTP API, multi-node, template per p
 3. **M2 Lifecycle** — create/list/start/stop/delete + Tailscale enrol.
 4. **M3 Archive/restore** — full verified flow with failure injection tests.
 5. **M4 Client** — thin client, SSH config, `lab ssh`.
-6. **M5 DX** — profiles, auto-setup, dotfiles, snapshots, clone.
-7. **M6 Idle + hardening.**
+6. **M5 DX** — profiles, auto-setup, dotfiles, snapshots, clone, multi-distro.
+7. **M6 MCP** — read-only tools first, then exec/files, then approvals and audit.
+8. **M7 Idle + hardening.**
