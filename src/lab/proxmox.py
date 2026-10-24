@@ -90,7 +90,8 @@ class Proxmox:
         return cfg
 
     def backups(self, storage_id: str, vmid: int | None = None) -> list:
-        argv = ["pvesm", "list", storage_id, "--content", "backup"]
+        # `pvesm list` has no JSON output; the API behind pvesh does.
+        argv = ["pvesh", "get", f"/nodes/{self.node()}/storage/{storage_id}/content", "--content", "backup"]
         if vmid is not None:
             argv += ["--vmid", str(vmid)]
         argv += ["--output-format", "json"]

@@ -127,6 +127,15 @@ class FakeProxmox(Runner):
                     for s, d in self.storages.items()
                 ]
             return self._ok(a, json.dumps(rows))
+        parts = path.strip("/").split("/")
+        if len(parts) == 5 and parts[:2] == ["nodes", "pve"] and parts[2] == "storage" and parts[4] == "content":
+            sid, vmid = parts[3], self._opt(a, "--vmid")
+            if sid not in self.storages:
+                return self._err(a, f"storage '{sid}' does not exist")
+            rows = [{"volid": v, "size": b["size"], "vmid": b["vmid"], "content": "backup", "format": "vma.zst"}
+                    for v, b in self.backups.items()
+                    if b["storage"] == sid and (vmid is None or b["vmid"] == int(vmid))]
+            return self._ok(a, json.dumps(rows))
         if path == "/nodes":
             return self._ok(a, json.dumps([{"node": "pve", "status": "online"}]))
         if path == "/nodes/pve/network":
