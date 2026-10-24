@@ -154,6 +154,17 @@ Modules are pinned in the tool (docker, go, rust, uv, …), not arbitrary downlo
 
 Exit codes are stable (0 ok, 2 usage, 3 precondition failed, 4 verification failed, 5 partial/needs attention).
 
+### 7.1 Lifecycle behaviour (implemented in M2)
+
+- **create**: validates the name, then under the global lock: name free (one generic "unavailable" error whether taken by you, someone else or a foreign VM), quota check, template lookup (built lazily if missing), VMID from the range, journal entry, DB row (`creating`), clone, per-VM cloud-init user-data snippet (hostname, the owner as sole login user with passwordless sudo and a locked password, no keys), CPU/RAM/tags/description, optional disk grow, boot, wait for guest agent, wait for first-boot, Tailscale enrolment, then `running`. **Any failure rolls back** the VM it created (only if it still carries the name lab gave it), the snippet and the DB row, and records `rolled_back`.
+- **stop**: logs the guest out of Tailscale, graceful shutdown, and if the guest has not stopped within 120 s it stops *without* forcing and tells you to retry with `--force`. Clears the recorded tailnet IP, keeps the name.
+- **start**: quota check, boot, wait for agent, enrol with a freshly minted key (the IP may differ). Idempotent: a running, enrolled project is left alone; a running project that lost its enrolment is re-enrolled.
+- **delete**: typed project name (or `--yes`), refuses protected and archived projects, re-verifies the VM (name `lab-<name>`, tag `lab`, inside the VMID range) before destroying, same shutdown rule as stop, removes the snippet and index row.
+- **list/status**: non-admins see only their own projects; `--all` is admin only. Someone else's project is reported as "no such project". `list` merges live Proxmox state (`missing` if the VM has vanished).
+- **identity**: over SSH, the tailnet login must map to a lab user. On the host console as root with no SSH session, the caller is the first admin. `--as NAME` lets an admin act with that user's (lesser) permissions.
+- **quotas**: vCPU, RAM and VM count are counted for running projects; disk for all non-archived projects. Defaults in `[quota]`, per-user overrides in the user record, admins exempt.
+- **users**: `lab user add|list|remove` (admin); cannot remove a user who owns projects or the last admin.
+
 ## 8. Auto-setup on create
 
 If a project source is provided (`--repo URL`, `--from PATH`) or already present in the VM, lab detects, in order, and runs inside the VM after first boot:

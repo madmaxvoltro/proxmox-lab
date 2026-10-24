@@ -19,6 +19,11 @@ class PreconditionError(LabError):
     exit_code = EXIT_PRECONDITION
 
 
+class AccessError(LabError):
+    """Caller is unknown or not allowed. Same exit code as a failed precondition."""
+    exit_code = EXIT_PRECONDITION
+
+
 class VerificationError(LabError):
     exit_code = EXIT_VERIFY
 

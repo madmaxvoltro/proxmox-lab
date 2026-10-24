@@ -13,7 +13,7 @@ from . import distros
 from .config import Config
 from .errors import LabError, PreconditionError, VerificationError
 from .hostio import HostIO
-from .proxmox import Proxmox
+from .proxmox import Proxmox, ProxmoxError
 from .runner import DryRunRunner
 from .units import to_gib
 
@@ -182,12 +182,10 @@ class TemplateBuilder:
         return vmid
 
     def _wait_agent(self, vmid: int) -> None:
-        deadline = self.monotonic() + self.agent_timeout
-        while not self.px.agent_ready(vmid):
-            if self.monotonic() > deadline:
-                raise TemplateError(f"guest agent did not come up within {self.agent_timeout:.0f}s "
-                                    "(no DHCP lease or package install failed?)")
-            self.sleep(self.poll)
+        try:
+            self.px.wait_agent(vmid, self.agent_timeout, self.poll, sleep=self.sleep, monotonic=self.monotonic)
+        except ProxmoxError as e:
+            raise TemplateError(str(e)) from e
 
     def _guest(self, vmid: int, argv, failure: str, timeout: int) -> dict:
         res = self.px.guest_exec(vmid, argv, check=False, timeout=timeout)

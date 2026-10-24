@@ -7,15 +7,17 @@ import os
 import sys
 from pathlib import Path
 
-from . import __version__, distros, doctor as doctor_mod
+from . import __version__, access, distros, doctor as doctor_mod
 from . import config as config_mod
 from . import init as init_mod
 from .db import DB
-from .errors import LabError
+from .errors import LabError, PreconditionError
 from .hostio import DryRunHostIO, HostIO
+from .lifecycle import Lab
 from .prompt import ScriptedPrompter, TerminalPrompter
 from .proxmox import Proxmox
 from .runner import DryRunRunner, SubprocessRunner
+from .tailscale import Tailscale
 from .template import TemplateBuilder
 
 
@@ -39,6 +41,41 @@ def build_parser() -> argparse.ArgumentParser:
     i.add_argument("--yes", action="store_true", help="non-interactive: accept confirmations")
 
     sub.add_parser("doctor", help="read-only health and drift checks")
+
+    c = sub.add_parser("create", help="create a project VM")
+    c.add_argument("name")
+    c.add_argument("--distro")
+    c.add_argument("--size", help="preset: small|medium|large (see config presets)")
+    c.add_argument("--cpu", type=int)
+    c.add_argument("--ram", help="e.g. 4G or 4096M")
+    c.add_argument("--disk", help="e.g. 64G (grow only)")
+    c.add_argument("--full", dest="clone_mode", action="store_const", const="full")
+    c.add_argument("--linked", dest="clone_mode", action="store_const", const="linked")
+    c.add_argument("--owner", help="admin only: create for another lab user")
+    c.add_argument("--no-tailscale", action="store_true", help="skip tailnet enrolment (guest agent access only)")
+
+    ls = sub.add_parser("list", help="list projects")
+    ls.add_argument("--all", action="store_true", help="admin: every user's projects")
+    for nm in ("status", "start", "restart", "protect", "unprotect"):
+        sub.add_parser(nm).add_argument("name")
+    st = sub.add_parser("stop")
+    st.add_argument("name")
+    sub.choices["stop"].add_argument("--force", action="store_true", help="hard stop if graceful shutdown times out")
+    sub.choices["restart"].add_argument("--force", action="store_true")
+    d = sub.add_parser("delete", help="destroy a project VM")
+    d.add_argument("name")
+    d.add_argument("--yes", action="store_true", help="confirm by flag instead of typing the name")
+    d.add_argument("--force", action="store_true")
+
+    u = sub.add_parser("user", help="manage lab users (admin)")
+    us = u.add_subparsers(dest="ucmd", required=True)
+    ua = us.add_parser("add")
+    ua.add_argument("login")
+    ua.add_argument("name")
+    ua.add_argument("--admin", action="store_true")
+    us.add_parser("list")
+    us.add_parser("remove").add_argument("name")
+    p.add_argument("--as", dest="as_name", help="admin: act as another lab user")
 
     t = sub.add_parser("template", help="manage golden templates")
     ts = t.add_subparsers(dest="tcmd", required=True)
@@ -74,6 +111,17 @@ class Ctx:
 
     def templates(self, progress=print) -> TemplateBuilder:
         return TemplateBuilder(self.cfg, self.px, self.io, self.db(), progress=progress)
+
+    def caller(self):
+        db = self.db()
+        if db is None:
+            raise PreconditionError("lab is not initialised; run `lab init`")
+        return access.resolve_caller(db, dict(os.environ), self.runner, as_name=self.args.as_name)
+
+    def lab(self) -> Lab:
+        caller = self.caller()
+        return Lab(self.cfg, self.px, self.io, self.db(), self.templates(), Tailscale(self.cfg, self.px, self.io),
+                   caller, say=print)
 
 
 def cmd_discover(ctx):
@@ -152,6 +200,57 @@ def cmd_template(ctx):
     return 0
 
 
+def _table(rows, cols):
+    if not rows:
+        return "(none)"
+    widths = [max(len(c), *(len(str(r.get(c) if r.get(c) is not None else "-")) for r in rows)) for c in cols]
+    line = lambda vals: "  ".join(str(v).ljust(w) for v, w in zip(vals, widths)).rstrip()
+    return "\n".join([line(cols)] + [line([r.get(c) if r.get(c) is not None else "-" for c in cols]) for r in rows])
+
+
+def cmd_project(ctx):
+    a = ctx.args
+    lab = ctx.lab()
+    if a.cmd == "create":
+        res = lab.create(a.name, distro=a.distro, size=a.size, cpu=a.cpu, ram=a.ram, disk=a.disk,
+                         clone_mode=a.clone_mode, owner=a.owner, tailscale=not a.no_tailscale)
+        _emit(a, res, f"created {res['name']} (VMID {res['vmid']}, {res['state']})"
+              + (f"\n  connect: {res['ssh']}" if res.get("ssh") else "\n  no tailnet; reach it via the guest agent / LAN"))
+    elif a.cmd == "list":
+        rows = lab.list(everything=a.all)
+        cols = ["name", "owner", "state", "vmid", "cpu", "ram_mb", "disk_gb", "tailnet_name", "tailnet_ip"]
+        _emit(a, rows, _table(rows, cols))
+    elif a.cmd in ("status", "start", "stop", "restart"):
+        fn = {"status": lab.status, "start": lab.start}.get(a.cmd)
+        res = fn(a.name) if fn else getattr(lab, a.cmd)(a.name, force=a.force)
+        _emit(a, res, json.dumps(res, indent=2, default=str))
+    elif a.cmd == "delete":
+        confirm = a.name if a.yes else input(f"Type the project name ({a.name}) to confirm deletion: ").strip()
+        lab.delete(a.name, confirm, force=a.force)
+        print(f"deleted {a.name}")
+    elif a.cmd in ("protect", "unprotect"):
+        lab.set_protected(a.name, a.cmd == "protect")
+        print(f"{a.name}: {a.cmd}ed")
+    return 0
+
+
+def cmd_user(ctx):
+    a = ctx.args
+    caller = ctx.caller()
+    db = ctx.db()
+    if a.ucmd == "add":
+        access.add_user(db, caller, a.login, a.name, "admin" if a.admin else "user")
+        print(f"added {a.name} ({a.login})")
+    elif a.ucmd == "list":
+        access.require_admin(caller)
+        rows = [{"name": u["name"], "login": u["login"], "role": u["role"]} for u in db.list_users()]
+        _emit(a, rows, _table(rows, ["name", "login", "role"]))
+    elif a.ucmd == "remove":
+        access.remove_user(db, caller, a.name)
+        print(f"removed {a.name}")
+    return 0
+
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(message)s")
@@ -172,6 +271,10 @@ def main(argv=None) -> int:
             return cmd_doctor(ctx)
         elif args.cmd == "template":
             return cmd_template(ctx)
+        elif args.cmd == "user":
+            return cmd_user(ctx)
+        elif args.cmd in ("create", "list", "status", "start", "stop", "restart", "delete", "protect", "unprotect"):
+            return cmd_project(ctx)
         return 0
     except LabError as e:
         print(f"error: {e}", file=sys.stderr)

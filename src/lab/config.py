@@ -64,6 +64,15 @@ class MCP:
 
 
 @dataclass
+class Quota:
+    """Per-user defaults; users.quota_json can override any key. Admins are exempt."""
+    max_running_vms: int = 4
+    max_cpu: int = 8
+    max_ram: str = "24G"
+    max_disk: str = "256G"  # total fast-disk allocation across the user's non-archived projects
+
+
+@dataclass
 class Paths:
     state_dir: str = DEFAULT_STATE_DIR
     log_dir: str = "/var/log/project-lab"
@@ -93,6 +102,7 @@ class Config:
     tailscale: Tailscale = field(default_factory=Tailscale)
     idle: Idle = field(default_factory=Idle)
     mcp: MCP = field(default_factory=MCP)
+    quota: Quota = field(default_factory=Quota)
     paths: Paths = field(default_factory=Paths)
     presets: dict = field(default_factory=lambda: {k: dict(v) for k, v in DEFAULT_PRESETS.items()})
 
@@ -137,6 +147,7 @@ _SECTIONS = {
     "tailscale": Tailscale,
     "idle": Idle,
     "mcp": MCP,
+    "quota": Quota,
     "paths": Paths,
 }
 

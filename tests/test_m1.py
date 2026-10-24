@@ -35,7 +35,7 @@ def make_io(distro=UBUNTU, image=IMAGE):
     digest = hashlib.new(distro.checksum_type, image).hexdigest()
     io.urls[distro.checksum_url] = f"{digest} *{distro.checksum_name}\n"
     io.urls[distro.image_url] = image
-    io.files["/etc/project-lab/ts-oauth"] = b"x"
+    io.files["/etc/project-lab/ts-oauth"] = b'{"client_id": "cid", "client_secret": "csecret"}'
     return io
 
 

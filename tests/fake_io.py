@@ -14,6 +14,21 @@ class FakeIO(HostIO):
         self.root_device_paths = set()  # paths that are on the root filesystem
         self.made = []
         self.removed = []
+        self.posts = []
+        self.post_replies = {
+            "https://api.tailscale.com/api/v2/oauth/token": {"access_token": "at-1"},
+            "https://api.tailscale.com/api/v2/tailnet/-/keys": {"key": "tskey-auth-SECRET123"},
+        }
+
+    def post(self, url, *, form=None, json_body=None, headers=None, timeout=30):
+        self.posts.append({"url": url, "form": form, "json": json_body, "headers": headers})
+        reply = self.post_replies[url]
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    def read_text(self, path):
+        return self.files[path].decode()
 
     def fetch_text(self, url, timeout=30):
         if url not in self.urls:

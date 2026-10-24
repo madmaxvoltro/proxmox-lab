@@ -4,9 +4,11 @@ Same idea as runner.py: one seam, with dry-run and test doubles. Reads are alway
 writes and downloads are skipped (and recorded) in dry-run."""
 
 import hashlib
+import json
 import logging
 import os
 import shutil
+import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -37,6 +39,27 @@ class HostIO:
                 return 200 <= r.status < 300
         except OSError:
             return False
+
+    def post(self, url: str, *, form: dict | None = None, json_body: dict | None = None,
+             headers: dict | None = None, timeout: float = 30) -> dict:
+        """POST and parse a JSON reply. Bodies and replies may hold secrets: never logged."""
+        if form is not None:
+            body, ctype = urllib.parse.urlencode(form).encode(), "application/x-www-form-urlencoded"
+        else:
+            body, ctype = json.dumps(json_body or {}).encode(), "application/json"
+        req = urllib.request.Request(url, data=body, method="POST",
+                                     headers={"User-Agent": USER_AGENT, "Content-Type": ctype, **(headers or {})})
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return json.loads(r.read().decode("utf-8", "replace") or "{}")
+        except OSError as e:  # URLError/HTTPError: message only, never the request body
+            raise FetchError(f"POST {url} failed: {e}") from e
+        except json.JSONDecodeError as e:
+            raise FetchError(f"POST {url} returned invalid JSON") from e
+
+    def read_text(self, path: str) -> str:
+        with open(path, encoding="utf-8") as fh:
+            return fh.read()
 
     def exists(self, path: str) -> bool:
         return os.path.exists(path)
@@ -113,3 +136,7 @@ class DryRunHostIO(HostIO):
 
     def remove(self, path):
         self._skip("remove", path)
+
+    def post(self, url, **kw):
+        self._skip("POST", url)
+        return {"key": "tskey-dry-run"}

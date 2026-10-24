@@ -30,6 +30,7 @@ class FakeProxmox(Runner):
         self._failures = []
         self._seq = 0
         self.guest_agent_ready = True
+        self.ignore_shutdown = False
         self.path_root = "/var/lib/vz"  # where `pvesm path` says dir storages live
         self.guest_results = []  # (predicate(cmd_str), result dict) checked in order
         self.guest_log = []  # commands run inside guests, as strings
@@ -198,6 +199,8 @@ class FakeProxmox(Runner):
             vm["status"] = "running"
             return self._ok(a)
         if sub in ("shutdown", "stop"):
+            if sub == "shutdown" and self.ignore_shutdown:
+                return self._ok(a)  # guest ignores the ACPI request
             vm["status"] = "stopped"
             return self._ok(a)
         if sub == "destroy":

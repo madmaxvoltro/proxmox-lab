@@ -5,6 +5,7 @@ human tables. Methods return plain dicts/lists; nothing here knows about project
 
 import json
 import re
+import time
 
 from .errors import CommandError, LabError, PreconditionError
 from .runner import Runner
@@ -115,6 +116,15 @@ class Proxmox:
 
     def agent_ready(self, vmid: int) -> bool:
         return self.r.run(["qm", "agent", str(vmid), "ping"], check=False).ok
+
+    def wait_agent(self, vmid: int, timeout: float = 300, poll: float = 3, *,
+                   sleep=time.sleep, monotonic=time.monotonic) -> None:
+        deadline = monotonic() + timeout
+        while not self.agent_ready(vmid):
+            if monotonic() > deadline:
+                raise ProxmoxError(f"guest agent did not come up within {timeout:.0f}s "
+                                   "(no DHCP lease or package install failed?)")
+            sleep(poll)
 
     def add_dir_command(self, storage_id: str, path: str, content: str, mountpoint: str | None = None) -> list:
         argv = ["pvesm", "add", "dir", storage_id, "--path", path, "--content", content]
