@@ -142,7 +142,8 @@ class DBTest(unittest.TestCase):
             path = str(Path(d) / "sub" / "lab.db")
             DB(path).close()
             db2 = DB(path)
-            self.assertEqual(db2.conn.execute("PRAGMA user_version").fetchone()[0], 1)
+            from lab.db import _MIGRATIONS
+            self.assertEqual(db2.conn.execute("PRAGMA user_version").fetchone()[0], len(_MIGRATIONS))
             db2.close()
 
 

@@ -1,17 +1,22 @@
 """Command-line entry point (host core). M1: init, doctor, template, distros, plus M0 plumbing."""
 
 import argparse
+import base64
 import json
 import logging
 import os
+import shlex
 import sys
+import time
 from pathlib import Path
 
 from . import __version__, access, distros, doctor as doctor_mod
 from . import config as config_mod
 from . import init as init_mod
+from . import mcp as mcp_mod
+from .approvals import Approvals, state_of
 from .db import DB
-from .errors import LabError, PreconditionError
+from .errors import LabError, PreconditionError, UsageError
 from .hostio import DryRunHostIO, HostIO
 from .lifecycle import Lab
 from .prompt import ScriptedPrompter, TerminalPrompter
@@ -62,6 +67,22 @@ def build_parser() -> argparse.ArgumentParser:
     st.add_argument("name")
     sub.choices["stop"].add_argument("--force", action="store_true", help="hard stop if graceful shutdown times out")
     sub.choices["restart"].add_argument("--force", action="store_true")
+    ex = sub.add_parser("exec", help="run a command in a project VM (as its user)")
+    ex.add_argument("name")
+    ex.add_argument("--root", action="store_true")
+    ex.add_argument("--timeout", type=int, default=60)
+    ex.add_argument("--cwd")
+    ex.add_argument("argv", nargs="*", help="-- COMMAND [ARGS...]")
+    sub.add_parser("put", help="write stdin to DST in a project VM").add_argument("name")
+    sub.choices["put"].add_argument("dst")
+    sub.add_parser("get", help="write a file from a project VM to stdout").add_argument("name")
+    sub.choices["get"].add_argument("src")
+    ap = sub.add_parser("approve", help="approve (or --deny) an action an AI session asked for")
+    ap.add_argument("id")
+    ap.add_argument("--deny", action="store_true")
+    ap.add_argument("--yes", action="store_true", help="do not ask for confirmation")
+    sub.add_parser("approvals", help="list approvals").add_argument("--all", action="store_true")
+    sub.add_parser("mcp", help="MCP stdio server; launched by the client over SSH")
     ar = sub.add_parser("archive", help="back up to the archive disk, verify, then free the fast disk")
     ar.add_argument("name")
     ar.add_argument("--keep-active", action="store_true", help="verify only; keep the active VM")
@@ -127,10 +148,10 @@ class Ctx:
             raise PreconditionError("lab is not initialised; run `lab init`")
         return access.resolve_caller(db, dict(os.environ), self.runner, as_name=self.args.as_name)
 
-    def lab(self) -> Lab:
+    def lab(self, say=print) -> Lab:
         caller = self.caller()
-        return Lab(self.cfg, self.px, self.io, self.db(), self.templates(), Tailscale(self.cfg, self.px, self.io),
-                   caller, say=print)
+        return Lab(self.cfg, self.px, self.io, self.db(), self.templates(say), Tailscale(self.cfg, self.px, self.io),
+                   caller, say=say)
 
 
 def cmd_discover(ctx):
@@ -251,6 +272,68 @@ def cmd_project(ctx):
     return 0
 
 
+def cmd_guest(ctx):
+    a = ctx.args
+    lab = ctx.lab(say=lambda m: print(m, file=sys.stderr))
+    if a.cmd == "exec":
+        cmd = a.argv[1:] if a.argv[:1] == ["--"] else a.argv
+        if not cmd:
+            raise UsageError("usage: lab exec NAME -- COMMAND [ARGS...]")
+        res = lab.exec(a.name, cmd[0] if len(cmd) == 1 else shlex.join(cmd), root=a.root, timeout=a.timeout, cwd=a.cwd)
+        if a.json:
+            print(json.dumps(res))
+        else:
+            sys.stdout.write(res["stdout"])
+            sys.stderr.write(res["stderr"])
+        if res["timed_out"]:
+            return 124
+        return int(res["exit_code"] or 0) & 0xFF
+    if a.cmd == "put":
+        limit = ctx.cfg.mcp.max_file_bytes
+        data = sys.stdin.buffer.read(limit + 1)
+        if len(data) > limit:
+            raise UsageError(f"file too large for the guest agent ({limit} bytes); use scp over Tailscale")
+        res = lab.write_file(a.name, a.dst, base64.b64encode(data).decode(), base64_encoded=True)
+        _emit(a, res, f"wrote {res['bytes']} bytes to {a.dst}")
+    elif a.cmd == "get":
+        res = lab.read_file(a.name, a.src)
+        if res["truncated"]:
+            raise UsageError(f"file is {res['size']} bytes, over the {ctx.cfg.mcp.max_file_bytes} byte limit; use scp")
+        sys.stdout.buffer.write(res["content"].encode() if res["encoding"] == "utf-8" else base64.b64decode(res["content"]))
+        sys.stdout.buffer.flush()
+    return 0
+
+
+def cmd_approvals(ctx):
+    a = ctx.args
+    caller, db = ctx.caller(), ctx.db()
+    ap = Approvals(db, ctx.cfg.mcp.approval_ttl_s, caller.name)
+    if a.cmd == "approvals":
+        now = time.time()
+        rows = db.approval_list(None if (a.all and caller.is_admin) else caller.name)
+        out = [{"id": r["id"], "user": r["user"], "tool": r["tool"], "project": r["project"],
+                "state": state_of(r, now), "plan": r["plan"][:70]} for r in rows]
+        _emit(a, out, _table(out, ["id", "user", "tool", "project", "state", "plan"]))
+        return 0
+    row = db.approval_get(a.id)
+    if row is None or not (caller.is_admin or row["user"] == caller.name):
+        raise PreconditionError(f"no such approval: {a.id}")
+    print(f"Requested by an AI session for {row['user']}:\n  {row['plan']}")
+    if not a.yes and not a.deny:
+        if input("Approve this action? [y/N] ").strip().lower() not in ("y", "yes"):
+            print("not approved")
+            return 0
+    ap.decide(a.id, not a.deny, caller.name, caller.is_admin)
+    print("denied" if a.deny else "approved (single use; the AI must repeat the same call)")
+    return 0
+
+
+def cmd_mcp(ctx):
+    lab = ctx.lab(say=lambda m: print(m, file=sys.stderr))
+    mcp_mod.run(lab, ctx.cfg, ctx.db())
+    return 0
+
+
 def cmd_user(ctx):
     a = ctx.args
     caller = ctx.caller()
@@ -290,6 +373,12 @@ def main(argv=None) -> int:
             return cmd_template(ctx)
         elif args.cmd == "user":
             return cmd_user(ctx)
+        elif args.cmd in ("exec", "put", "get"):
+            return cmd_guest(ctx)
+        elif args.cmd in ("approve", "approvals"):
+            return cmd_approvals(ctx)
+        elif args.cmd == "mcp":
+            return cmd_mcp(ctx)
         elif args.cmd in ("create", "list", "status", "start", "stop", "restart", "delete", "protect", "unprotect",
                           "archive", "restore", "recover"):
             return cmd_project(ctx)

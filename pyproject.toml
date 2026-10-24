@@ -10,7 +10,7 @@ requires-python = ">=3.11"
 dependencies = []
 
 [project.scripts]
-lab = "lab.cli:main"
+lab = "lab.entry:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

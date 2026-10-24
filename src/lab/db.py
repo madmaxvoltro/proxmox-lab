@@ -67,6 +67,25 @@ _MIGRATIONS = [
     );
     CREATE INDEX journal_open ON journal(status);
     """,
+    # v2: MCP approvals
+    """
+    CREATE TABLE approvals (
+        id          TEXT PRIMARY KEY,
+        user        TEXT NOT NULL,
+        session     TEXT NOT NULL,
+        tool        TEXT NOT NULL,
+        project     TEXT,
+        fingerprint TEXT NOT NULL,
+        plan        TEXT NOT NULL,
+        status      TEXT NOT NULL CHECK (status IN ('pending','approved','denied','used')),
+        created_at  REAL NOT NULL,
+        expires_at  REAL NOT NULL,
+        decided_by  TEXT,
+        decided_at  REAL,
+        used_at     REAL
+    );
+    CREATE INDEX approvals_fp ON approvals(user, fingerprint);
+    """,
 ]
 
 
@@ -224,6 +243,51 @@ class DB:
                 "UPDATE journal SET status=?, detail=COALESCE(?, detail), updated_at=? WHERE id=?",
                 (status, detail, _now(), jid),
             )
+
+    def list_journal(self, project: str, limit: int = 50):
+        return self.conn.execute(
+            "SELECT * FROM journal WHERE project=? ORDER BY id DESC LIMIT ?", (project, limit)).fetchall()
+
+    # approvals -------------------------------------------------------------
+    def approval_create(self, id: str, user: str, session: str, tool: str, project: str | None,
+                        fingerprint: str, plan: str, now: float, ttl: float, status: str = "pending",
+                        decided_by: str | None = None) -> None:
+        with self.tx():
+            self.conn.execute(
+                "INSERT INTO approvals(id,user,session,tool,project,fingerprint,plan,status,created_at,"
+                "expires_at,decided_by,decided_at,used_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (id, user, session, tool, project, fingerprint, plan, status, now, now + ttl, decided_by,
+                 now if decided_by else None, now if status == "used" else None))
+
+    def approval_get(self, id: str):
+        return self.conn.execute("SELECT * FROM approvals WHERE id=?", (id,)).fetchone()
+
+    def approval_find(self, user: str, fingerprint: str, status: str, now: float):
+        return self.conn.execute(
+            "SELECT * FROM approvals WHERE user=? AND fingerprint=? AND status=? AND expires_at>? "
+            "ORDER BY created_at DESC LIMIT 1", (user, fingerprint, status, now)).fetchone()
+
+    def approval_list(self, user: str | None = None, limit: int = 50):
+        if user is None:
+            return self.conn.execute("SELECT * FROM approvals ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()
+        return self.conn.execute("SELECT * FROM approvals WHERE user=? ORDER BY created_at DESC LIMIT ?",
+                                 (user, limit)).fetchall()
+
+    def approval_decide(self, id: str, status: str, by: str, now: float) -> bool:
+        """Approve or deny a pending, unexpired approval. Returns whether it changed."""
+        with self.tx():
+            cur = self.conn.execute(
+                "UPDATE approvals SET status=?, decided_by=?, decided_at=? "
+                "WHERE id=? AND status='pending' AND expires_at>?", (status, by, now, id, now))
+            return cur.rowcount == 1
+
+    def approval_consume(self, id: str, now: float) -> bool:
+        """Single use: only one caller can flip approved -> used."""
+        with self.tx():
+            cur = self.conn.execute(
+                "UPDATE approvals SET status='used', used_at=? WHERE id=? AND status='approved' AND expires_at>?",
+                (now, id, now))
+            return cur.rowcount == 1
 
     def get_journal(self, jid: int):
         return self.conn.execute("SELECT * FROM journal WHERE id=?", (jid,)).fetchone()

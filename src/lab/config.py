@@ -61,6 +61,9 @@ class MCP:
     max_cpu: int = 8
     max_ram: str = "16G"
     max_running_vms: int = 6
+    max_output_bytes: int = 65536      # per stream returned to the model
+    max_file_bytes: int = 4 << 20      # file read/write through the guest agent
+    approval_ttl_s: int = 600
 
 
 @dataclass
@@ -80,6 +83,10 @@ class Paths:
     @property
     def db(self) -> str:
         return str(Path(self.state_dir) / "lab.db")
+
+    @property
+    def audit_log(self) -> str:
+        return str(Path(self.log_dir) / "mcp-audit.log")
 
     @property
     def image_dir(self) -> str:

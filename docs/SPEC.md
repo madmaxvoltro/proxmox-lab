@@ -265,7 +265,7 @@ Flags: `--keep-active` (verify only, don't remove), `--no-boot-test` (discourage
 
 ## 16. MCP server (`lab mcp`)
 
-**Transport**: stdio, launched by the MCP client (Claude Desktop / Claude Code) on the Windows PC. It uses the thin client's SSH-over-tailnet transport to the host; nothing new listens anywhere. All host calls use `lab ... --json`.
+**Transport** (as built in M4): stdio. The MCP client on the PC launches `ssh -T -o BatchMode=yes <host> lab mcp`, so the server process runs **on the host** over the client's SSH-over-tailnet transport; nothing new listens anywhere. This replaces the earlier idea of running the server on the PC and calling `lab --json`: the audit log, approvals (`lab approve`) and caller identity all live on the host, so the PC holds no policy and no secrets. `lab mcp-config` prints the client config.
 
 **Trust model**: the AI gets a full shell **inside project VMs** (they are the sandbox) and lifecycle control, but **never a shell on the Proxmox host**. There is no host-exec, no raw `qm`, no arbitrary file access outside a VM. The MCP layer calls the same code paths as the CLI; it adds no extra Proxmox privileges.
 
@@ -298,6 +298,17 @@ Approval delivery: MCP elicitation where the client supports it, otherwise the c
 **Audit**: every MCP call (tool, args with secrets redacted, project, result, approver) is appended to `/var/log/project-lab/mcp-audit.log` on the host. Output returned to the model is size-capped; the Tailscale key and config secrets are never exposed by any tool.
 
 **Identity**: `lab mcp` runs as the calling human's lab identity. The AI acts as that user, is bound by their permissions and quotas, and is never given its own owner tag; VMs it creates are owned by the human. Approvals are always answered by that human (or an admin), never by the AI session.
+
+### 16.1 As built (M4)
+
+- **Tools**: `lab_list`, `lab_status`, `lab_create`, `lab_attach`, `lab_start/stop/restart`, `lab_archive`, `lab_restore`, `lab_delete`, `lab_exec` (+ `background`, `lab_exec_poll`, `lab_exec_cancel`), `lab_read_file`, `lab_write_file`, `lab_upload`, `lab_download` (base64), `lab_logs`, `lab_approvals`. Not yet: `lab_snapshot/rollback/clone/resize` (M5 features). There is no tool that grants an approval, protects/unprotects, or touches the host. Unknown arguments are rejected (`additionalProperties: false`), so a tool call can never set owner, disk, bridge or other host-decided settings.
+- **Where commands run**: the QEMU guest agent, as the project owner via `runuser -l`; root only with approval. File content goes over stdin as base64, never in argv. Files are limited to `mcp.max_file_bytes` (4 MiB); larger transfers use scp over Tailscale. Output is capped per stream (`mcp.max_output_bytes`).
+- **Session binding**: a session may act inside projects it created or that a human let it attach to (per project, per session). `lab_start/stop/restart`, exec, files and logs all count as working inside. `lab_list`/`lab_status` do not need attachment.
+- **Approvals**: needed for delete, archive, restore, root exec/read/write, create above `[mcp]` caps, and attaching. Delivered by MCP elicitation when the client supports it (accept = approve exactly this action; decline/cancel = refused, nothing is stored); otherwise the call fails with a six-character ID and the human runs `lab approve ID` (or `lab approve ID --deny`) in a host terminal. An approval is bound to the exact tool, project and arguments, is single-use, expires after `mcp.approval_ttl_s` (600 s), and only its owner or an admin can decide it. Asking again reuses the pending ID.
+- **Protected projects**: `lab_list`/`lab_status` show only name and `protected`. Stop, restart, archive, restore and delete are refused outright. Start, exec, files and logs need a fresh single-use approval every time, even when attached.
+- **Audit** (`/var/log/project-lab/mcp-audit.log`, JSON lines): a `start` record for every state-changing call and an `end` record for every call, with session, user, tool, project, redacted arguments, result, approver and duration. Tailscale keys, `password/token/secret=` text, bearer tokens and secret-named fields are redacted; file contents are stored only as length and hash. **Fail closed**: if the log cannot be written the call is not executed.
+- **Client** (`lab` on the PC, which dispatches to client mode when it is not on a Proxmox host; `LAB_CLIENT=1`/`LAB_HOST=1` override): `lab setup HOST [--user U]`, `lab ssh NAME [--via-host]`, `lab ssh-config` (managed block in `~/.ssh/config` with `lab-host` and `lab-NAME` entries; everything outside the markers is untouched, original backed up once), `lab mcp-config`, `lab put/get` of local files, a local typed confirmation for `delete`, and every other command forwarded to the host over SSH with arguments quoted for the remote shell.
+- **Host commands added**: `lab exec NAME [--root] [--timeout N] [--cwd D] -- CMD...`, `lab put NAME DST` (stdin), `lab get NAME SRC` (stdout), `lab approve ID [--deny] [--yes]`, `lab approvals [--all]`, `lab mcp`.
 
 ## 17. Multi-user
 

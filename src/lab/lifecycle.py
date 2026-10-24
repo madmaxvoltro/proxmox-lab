@@ -14,6 +14,7 @@ from .cloudinit import user_data  # noqa: F401  (re-exported)
 from .config import Config
 from .db import DB
 from .errors import AccessError, LabError, PreconditionError, UsageError
+from .guest import GuestOps
 from .hostio import HostIO
 from .locking import lock
 from .proxmox import Proxmox
@@ -46,7 +47,7 @@ def resolve_resources(cfg: Config, size=None, cpu=None, ram=None, disk=None) -> 
     return c, r, d
 
 
-class Lab(ArchiveOps):
+class Lab(ArchiveOps, GuestOps):
     def __init__(self, cfg: Config, px: Proxmox, io: HostIO, db: DB, templates: TemplateBuilder,
                  ts: Tailscale, caller: Caller, *, lock_dir: str | None = None, sleep=time.sleep,
                  monotonic=time.monotonic, say=lambda m: None, agent_timeout: float = 300):
