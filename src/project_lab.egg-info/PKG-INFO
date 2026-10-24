@@ -1,0 +1,5 @@
+Metadata-Version: 2.4
+Name: project-lab
+Version: 0.0.1
+Summary: Personal project lab on Proxmox: fast VMs, Tailscale, verified archives
+Requires-Python: >=3.11

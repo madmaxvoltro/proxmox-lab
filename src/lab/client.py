@@ -59,7 +59,8 @@ def run_remote(cfg, args, *, stdin=None, stdout=None, capture=False, tty=False):
 
 
 def remote_json(cfg, args):
-    res = run_remote(cfg, [*args, "--json"] if "--json" not in args else args, capture=True)
+    # --json is a global option: it has to come before the subcommand
+    res = run_remote(cfg, args if "--json" in args else ["--json", *args], capture=True)
     if res.returncode != 0:
         raise ClientError((res.stderr or res.stdout or "remote command failed").strip())
     return json.loads(res.stdout)

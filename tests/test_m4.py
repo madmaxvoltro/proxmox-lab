@@ -601,6 +601,26 @@ class ClientTest(unittest.TestCase):
             self.assertEqual(p.with_name("config.lab-backup").read_text(), "Host x\n  User y\n")
             self.assertEqual(p.read_text().count(client.BEGIN), 1)
 
+    def test_json_flag_goes_before_the_subcommand(self):
+        import subprocess
+        seen = []
+        real = client.run_remote
+
+        def fake(cfg, args, **kw):
+            seen.append(list(args))
+            return subprocess.CompletedProcess(args, 0, stdout='[{"name": "a"}]', stderr="")
+        client.run_remote = fake
+        try:
+            self.assertEqual(client.remote_json(self.CFG, ["list"]), [{"name": "a"}])
+            client.remote_json(self.CFG, ["status", "api"])
+            client.remote_json(self.CFG, ["--json", "list"])
+        finally:
+            client.run_remote = real
+        self.assertEqual(seen, [["--json", "list"], ["--json", "status", "api"], ["--json", "list"]])
+        # and the real parser accepts exactly that order, so the command line the client builds works on the host
+        a = build_parser().parse_args(["--json", "status", "api"])
+        self.assertEqual((a.json, a.cmd, a.name), (True, "status", "api"))
+
     def test_mcp_entry_uses_ssh_stdio_and_no_secrets(self):
         e = client.mcp_server_entry(self.CFG)
         self.assertEqual(e["command"], "ssh")
