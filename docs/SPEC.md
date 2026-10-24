@@ -158,7 +158,7 @@ Always overridable with `--no-setup`. Runs only inside the VM (isolation is the 
 
 ## 9. Tailscale lifecycle
 
-Decisions: ephemeral, tagged (`tag:project-lab`), reusable pre-approved auth key delivered at runtime through the QEMU guest agent (`qm guest exec --pass-stdin`), not cloud-init (decision Q1); join with `tailscale up --ssh --hostname lab-NAME`. No SSH keys to manage; access governed by tailnet ACL `ssh` rules.
+Decisions: ephemeral, tagged (`tag:server` + owner tag `tag:user-<owner>`), pre-approved auth key (shared reusable, or minted per VM — see Q10) delivered at runtime through the QEMU guest agent (`qm guest exec --pass-stdin`), not cloud-init (decision Q1); join with `tailscale up --ssh --hostname lab-NAME`. No SSH keys to manage; access governed by tailnet ACL `ssh` rules.
 
 | Event | Action |
 |---|---|
@@ -222,14 +222,17 @@ Flags: `--keep-active` (verify only, don't remove), `--no-boot-test` (discourage
 ## 15. Open questions
 
 - ~~Q1 Key delivery~~ — **decided**: guest-agent stdin (§9).
-- **Q2** Tailscale ACL: do you already have `tagOwners` for `tag:project-lab` and an `ssh` rule allowing your user → that tag?
-- **Q3** Default VM login user name (`ubuntu`, or your name) and where your SSH/Tailscale SSH identity comes from.
-- **Q4** Dotfiles repo URL and GitHub auth method (deploy key per project vs. `gh auth` token).
-- **Q5** Idle thresholds (days, CPU %).
-- **Q6** Whether the thin client should also support macOS/Linux (spec assumes Windows only).
-- **Q7** MCP "enter another project" approval: delivered how? (MCP elicitation prompt if the client supports it, else a pending-approval queue answered with `lab approve ID` from a terminal.) Proposed: both, elicitation first.
-- **Q8** How the AI executes in VMs: guest agent (works before Tailscale is up, no network needed) vs. Tailscale SSH (real shell/PTY, streaming). Proposed: guest agent for one-shot commands and file transfer, SSH for interactive/long-running.
-- **Q9** Per-family package maps for profiles (apt vs dnf) — how far to go in v1 (proposed: only the base packages and the docker/go/rust/uv modules).
+- ~~Q2~~ **decided**: VMs get `tag:server` + an owner tag (`tag:user-<name>`), never an AI tag; existing tags are `server` (admins can SSH) and `userapp` (apps open to other users). `lab init` prints the missing `tagOwners` / `ssh` ACL snippet. See Q10 for the key-minting consequence.
+- ~~Q3~~ **decided**: login user = the owner's lab username (same in every distro), created by cloud-init, passwordless sudo, password locked (access only via Tailscale SSH / guest agent).
+- ~~Q4~~ **decided**: per-project GitHub deploy key generated in the VM (public key printed for the user to add); dotfiles repo URL is a config setting, applied on first boot if set.
+- ~~Q5~~ **decided**: idle = 7 days, no SSH session, CPU < 5%; stop only; disabled until enabled.
+- ~~Q6~~ **decided**: Windows-only client for v1 (portable paths).
+- ~~Q7~~ **decided**: MCP elicitation first, `lab approve ID` terminal fallback.
+- ~~Q8~~ **decided**: guest agent for one-shot commands and file transfer, Tailscale SSH for interactive/long-running.
+- ~~Q9~~ **decided** (my call): per-family package maps cover only base packages and the docker/go/rust/uv modules in v1.
+- **Q10 Per-owner Tailscale keys.** An auth key's tags are fixed when the key is created, so one shared key cannot give each VM a different owner tag. Options: (a) one reusable key per user, created by hand and stored in `/etc/project-lab/keys/<user>`; (b) a Tailscale OAuth client that mints a single-use, short-expiry ephemeral key per VM with the right tags. Recommend (b): better security (a leaked key is useless), no per-user key chores; cost: a more powerful credential on the host (`auth_keys` write scope, restricted to the tags).
+- **Q11 Admins and the first user.** Who is the initial admin (your tailnet login), and how are new users added (`lab user add <tailnet-login> <name>` by an admin)?
+- **Q12 Archive ownership.** Archives are owned by the project's owner; admins can restore/delete anyone's. Confirm that users cannot see each other's archive existence.
 
 ## 16. MCP server (`lab mcp`)
 
@@ -264,3 +267,18 @@ Flags: `--keep-active` (verify only, don't remove), `--no-boot-test` (discourage
 Approval delivery: MCP elicitation where the client supports it, otherwise the call fails with an approval ID and the human runs `lab approve ID` in a terminal (Q7). Approvals expire (default 10 min), are single-use, and are bound to the exact action and arguments.
 
 **Audit**: every MCP call (tool, args with secrets redacted, project, result, approver) is appended to `/var/log/project-lab/mcp-audit.log` on the host. Output returned to the model is size-capped; the Tailscale key and config secrets are never exposed by any tool.
+
+**Identity**: `lab mcp` runs as the calling human's lab identity. The AI acts as that user, is bound by their permissions and quotas, and is never given its own owner tag; VMs it creates are owned by the human. Approvals are always answered by that human (or an admin), never by the AI session.
+
+## 17. Multi-user
+
+Multi-user is in v1 (decision).
+
+- **Identity**: users reach the host over Tailscale SSH; the host resolves the caller's tailnet login (`tailscale whois` on the connecting address) and maps it to a lab user in `/etc/project-lab/users.toml` (`login`, `name`, `role`, optional quota overrides). Unknown logins are refused. No new passwords or tokens.
+- **Roles**: `admin` (sees and manages everything, exempt from quotas) and `user` (own projects only; cannot see other users' projects or archives).
+- **Ownership**: every project records `owner`. Stored in the VM description/tag and DB. Owner is the login user inside the VM (§15 Q3) and drives the tailnet owner tag.
+- **Tags**: each VM joins the tailnet with `tag:server` + `tag:user-<owner>` (ACL snippet printed by `lab init`; key minting per Q10). Admins reach every VM through the `server` tag rule; an owner reaches their own through the owner-tag rule.
+- **Quotas** (per user, configurable, admins exempt): max running VMs, total vCPU, total RAM, total fast-disk GB, optional max archive GB. Checked on create, resize, start, restore. Refusals state which limit and the current usage.
+- **Visibility**: `lab list` filters by owner for users; `--all` for admins. Protect and attach rules in §16 apply per owner.
+- **Locks/IDs**: VMID range is shared; names are globally unique (`lab-<name>`), with an optional `<owner>/` display prefix considered later.
+- **Audit**: every state-changing command records the caller identity, in addition to MCP audit.
