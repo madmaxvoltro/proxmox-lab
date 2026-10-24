@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="620" viewBox="0 0 1120 620" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" role="img" aria-label="Architecture: your PC talks to the Proxmox host over Tailscale SSH; the host manages project VMs and verified archives">
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#58a6ff"/></marker>
+    <marker id="arr2" viewBox="0 0 10 10" refX="8.5" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#3fb950"/></marker>
+  </defs>
+  <rect width="1120" height="620" rx="18" fill="#0d1117"/>
+  <text x="560" y="42" text-anchor="middle" font-size="22" font-weight="700" fill="#e6edf3">How the pieces fit</text>
+
+  <rect x="30" y="72" width="300" height="470" rx="16" fill="#161b22" stroke="#30363d"/>
+  <text x="180" y="102" text-anchor="middle" font-size="14" fill="#8b949e" letter-spacing="1.5">YOUR PC (WINDOWS)</text>
+  <rect x="52" y="122" width="256" height="70" rx="12" fill="#21262d" stroke="#30363d"/><text x="180.0" y="154.0" text-anchor="middle" font-size="15" font-weight="600" fill="#e6edf3">Claude Desktop / Claude Code</text><text x="180.0" y="174.0" text-anchor="middle" font-size="12.5" fill="#8b949e">the AI, via MCP</text>
+  <rect x="52" y="212" width="256" height="70" rx="12" fill="#21262d" stroke="#30363d"/><text x="180.0" y="244.0" text-anchor="middle" font-size="15" font-weight="600" fill="#e6edf3">lab.exe</text><text x="180.0" y="264.0" text-anchor="middle" font-size="12.5" fill="#8b949e">connect · ssh · put / get</text>
+  <rect x="52" y="302" width="256" height="70" rx="12" fill="#10233f" stroke="#1f6feb"/><text x="180.0" y="334.0" text-anchor="middle" font-size="15" font-weight="600" fill="#e6edf3">Approval popup</text><text x="180.0" y="354.0" text-anchor="middle" font-size="12.5" fill="#8b949e">Approve / Deny, Return = approve</text>
+  <rect x="52" y="392" width="256" height="70" rx="12" fill="#21262d" stroke="#30363d"/><text x="180.0" y="424.0" text-anchor="middle" font-size="15" font-weight="600" fill="#e6edf3">ssh lab-&lt;project&gt;</text><text x="180.0" y="444.0" text-anchor="middle" font-size="12.5" fill="#8b949e">VS Code Remote-SSH works too</text>
+  <text x="180" y="500" text-anchor="middle" font-size="12.5" fill="#8b949e">no policy, no secrets on the PC</text>
+
+  <line x1="332" y1="250" x2="468" y2="250" stroke="#58a6ff" stroke-width="2.5" marker-end="url(#arr)" marker-start="url(#arr)"/>
+  <text x="400" y="232" text-anchor="middle" font-size="13" font-weight="600" fill="#58a6ff">SSH</text>
+  <text x="400" y="272" text-anchor="middle" font-size="12" fill="#8b949e">over Tailscale</text>
+  <text x="400" y="288" text-anchor="middle" font-size="12" fill="#8b949e">no open ports</text>
+
+  <rect x="470" y="72" width="340" height="470" rx="16" fill="#161b22" stroke="#30363d"/>
+  <text x="640" y="102" text-anchor="middle" font-size="14" fill="#8b949e" letter-spacing="1.5">PROXMOX HOST</text>
+  <rect x="492" y="122" width="296" height="62" rx="12" fill="#21262d" stroke="#30363d"/><text x="640.0" y="150.0" text-anchor="middle" font-size="15" font-weight="600" fill="#e6edf3">lab mcp</text><text x="640.0" y="170.0" text-anchor="middle" font-size="12.5" fill="#8b949e">MCP server, runs as you</text>
+  <rect x="492" y="198" width="296" height="62" rx="12" fill="#10233f" stroke="#1f6feb"/><text x="640.0" y="226.0" text-anchor="middle" font-size="15" font-weight="600" fill="#e6edf3">Approvals + audit log</text><text x="640.0" y="246.0" text-anchor="middle" font-size="12.5" fill="#8b949e">risky actions wait for a human</text>
+  <rect x="492" y="274" width="296" height="62" rx="12" fill="#21262d" stroke="#30363d"/><text x="640.0" y="302.0" text-anchor="middle" font-size="15" font-weight="600" fill="#e6edf3">lab</text><text x="640.0" y="322.0" text-anchor="middle" font-size="12.5" fill="#8b949e">create · archive · restore · delete</text>
+  <rect x="492" y="350" width="296" height="62" rx="12" fill="#21262d" stroke="#30363d"/><text x="640.0" y="378.0" text-anchor="middle" font-size="15" font-weight="600" fill="#e6edf3">SQLite index + journal</text><text x="640.0" y="398.0" text-anchor="middle" font-size="12.5" fill="#8b949e">resumes or rolls back after a crash</text>
+  <rect x="492" y="426" width="296" height="62" rx="12" fill="#21262d" stroke="#30363d"/><text x="640.0" y="454.0" text-anchor="middle" font-size="15" font-weight="600" fill="#e6edf3">Proxmox tools</text><text x="640.0" y="474.0" text-anchor="middle" font-size="12.5" fill="#8b949e">qm · vzdump · guest agent</text>
+  <text x="640" y="516" text-anchor="middle" font-size="12.5" fill="#8b949e">the only place that can change anything</text>
+
+  <line x1="812" y1="190" x2="868" y2="190" stroke="#3fb950" stroke-width="2.5" marker-end="url(#arr2)"/>
+  <line x1="812" y1="440" x2="868" y2="440" stroke="#3fb950" stroke-width="2.5" marker-end="url(#arr2)"/>
+
+  <rect x="870" y="72" width="220" height="250" rx="16" fill="#161b22" stroke="#30363d"/>
+  <text x="980" y="102" text-anchor="middle" font-size="14" fill="#8b949e" letter-spacing="1.5">PROJECT VMS</text>
+  <rect x="890" y="120" width="180" height="52" rx="12" fill="#0f2d1d" stroke="#238636"/><text x="980.0" y="143.0" text-anchor="middle" font-size="15" font-weight="600" fill="#e6edf3">demo</text><text x="980.0" y="163.0" text-anchor="middle" font-size="12.5" fill="#8b949e">ubuntu · tag:lab</text>
+  <rect x="890" y="182" width="180" height="52" rx="12" fill="#0f2d1d" stroke="#238636"/><text x="980.0" y="205.0" text-anchor="middle" font-size="15" font-weight="600" fill="#e6edf3">api</text><text x="980.0" y="225.0" text-anchor="middle" font-size="12.5" fill="#8b949e">debian · tag:lab</text>
+  <rect x="890" y="244" width="180" height="52" rx="12" fill="#0f2d1d" stroke="#238636"/><text x="980.0" y="267.0" text-anchor="middle" font-size="15" font-weight="600" fill="#e6edf3">web</text><text x="980.0" y="287.0" text-anchor="middle" font-size="12.5" fill="#8b949e">ubuntu · tag:lab</text>
+  <text x="980" y="314" text-anchor="middle" font-size="11.5" fill="#8b949e">fast disk · each joins your tailnet</text>
+
+  <rect x="870" y="352" width="220" height="190" rx="16" fill="#161b22" stroke="#30363d"/>
+  <text x="980" y="382" text-anchor="middle" font-size="14" fill="#8b949e" letter-spacing="1.5">ARCHIVE DISK</text>
+  <rect x="890" y="400" width="180" height="56" rx="12" fill="#2b1f0a" stroke="#9e6a03"/><text x="980.0" y="425.0" text-anchor="middle" font-size="15" font-weight="600" fill="#e6edf3">Verified backups</text><text x="980.0" y="445.0" text-anchor="middle" font-size="12.5" fill="#8b949e">zstd + SHA-256</text>
+  <text x="980" y="486" text-anchor="middle" font-size="11.5" fill="#8b949e">checked by a trial restore</text>
+  <text x="980" y="504" text-anchor="middle" font-size="11.5" fill="#8b949e">and a boot test before the</text>
+  <text x="980" y="522" text-anchor="middle" font-size="11.5" fill="#8b949e">original is removed</text>
+
+  <text x="560" y="582" text-anchor="middle" font-size="14" fill="#8b949e">The AI only ever gets a shell inside a project VM. It never gets a shell on the Proxmox host.</text>
+</svg>

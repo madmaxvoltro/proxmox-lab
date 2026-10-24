@@ -40,7 +40,7 @@ Legend: **P0** must for v1 · **P1** v1 if time allows · **P2** later · ⚠ ha
 | U01 | Caller identity from Tailscale login → `users.toml`, unknown logins refused | P0 |
 | U02 | Roles: admin / user; users see own projects only | P0 |
 | U03 | Per-project owner; login user in VM = owner name, passwordless sudo, locked password | P0 |
-| U04 | VMs tagged `tag:server` + `tag:user-<owner>` via OAuth-minted single-use keys; ACL snippet from `lab init` | P0 |
+| U04 | VMs tagged `tag:lab` + `tag:user-<owner>` via OAuth-minted single-use keys; ACL snippet from `lab init` | P0 |
 | U05 | Per-user quotas (running VMs, vCPU, RAM, fast-disk GB), admins exempt | P0 |
 | U06 | `lab user add/remove/list` (admin); `lab init` creates first admin | P0 |
 | U07 | Caller identity in audit log; AI acts as its human, no AI tag | P0 |

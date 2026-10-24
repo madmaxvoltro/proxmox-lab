@@ -100,7 +100,7 @@ class CreateTest(Base):
         self.lab().create("api")
         key_req = [p for p in self.io.posts if p["url"] == KEYS_URL][0]
         create = key_req["json"]["capabilities"]["devices"]["create"]
-        self.assertEqual(create["tags"], ["tag:server", "tag:user-max"])
+        self.assertEqual(create["tags"], ["tag:lab", "tag:user-max"])
         self.assertEqual((create["ephemeral"], create["reusable"], create["preauthorized"]), (True, False, True))
         self.assertLessEqual(key_req["json"]["expirySeconds"], 600)
         self.assertEqual(key_req["headers"], {"Authorization": "Bearer at-1"})

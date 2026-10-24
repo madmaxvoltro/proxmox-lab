@@ -285,7 +285,10 @@ class IdentityAclTest(unittest.TestCase):
         s = tsacl.acl_snippet("max@example.com", {"max": "max@example.com"})
         body = json.loads("\n".join(l for l in s.splitlines() if not l.startswith("//")))
         self.assertIn("tag:user-max", body["tagOwners"])
-        self.assertIn("tag:server", body["tagOwners"])
+        self.assertIn("tag:lab", body["tagOwners"])
+        self.assertNotIn("tag:server", json.dumps(body))  # never touches the tags of real servers
+        grant = [g for g in body["grants"] if g["dst"] == ["tag:user-max"]][0]
+        self.assertEqual((grant["src"], grant["ip"]), (["max@example.com"], ["tcp:22"]))
         users_rule = [r for r in body["ssh"] if r["dst"] == ["tag:user-max"]][0]
         self.assertEqual((users_rule["src"], users_rule["users"]), (["max@example.com"], ["max"]))
 

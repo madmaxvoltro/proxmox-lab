@@ -81,7 +81,7 @@ class Archive:
 
 @dataclass
 class Tailscale:
-    base_tag: str = "tag:server"
+    base_tag: str = "tag:lab"      # dedicated tag: gets none of your servers' tailnet permissions
     owner_tag_prefix: str = "tag:user-"
     oauth_file: str = "/etc/project-lab/ts-oauth"
 

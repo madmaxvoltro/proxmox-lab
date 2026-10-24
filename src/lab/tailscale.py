@@ -1,7 +1,7 @@
 """Tailscale enrolment for project VMs (SPEC section 9, decisions Q1 and Q10).
 
 An OAuth client on the host mints a single-use, short-lived, ephemeral, pre-approved key per
-enrolment, tagged with tag:server + the owner's tag. The key reaches the guest on stdin via
+enrolment, tagged with the base tag (tag:lab) + the owner's tag. The key reaches the guest on stdin via
 the QEMU guest agent: never in argv, cloud-init, the VM disk, logs or backups."""
 
 import json
@@ -64,6 +64,11 @@ class Tailscale:
         if not key.startswith("tskey-"):
             raise TailscaleError("Tailscale did not return an auth key (check the OAuth client's auth_keys scope and tags)")
         return key
+
+    def verify_credentials(self, owner: str) -> None:
+        """Prove the OAuth client works end to end: it must be able to mint an auth key with exactly the
+        tags lab uses. The key is single-use and expires in 10 minutes; it is never delivered anywhere."""
+        self.mint_key(self.tags_for(owner), "lab setup check")
 
     def enroll(self, vmid: int, hostname: str, owner: str) -> Enrolment:
         key = self.mint_key(self.tags_for(owner), f"lab {hostname}")

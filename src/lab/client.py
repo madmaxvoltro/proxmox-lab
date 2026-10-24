@@ -193,11 +193,51 @@ def cmd_delete(cfg, argv):
     return run_remote(cfg, ["delete", *argv]).returncode
 
 
+def remove_from_path(value: str, folder: str) -> str:
+    """`value` (a ;-separated PATH) without `folder`, compared the way Windows does (case-insensitive)."""
+    keep = [p for p in value.split(";") if p and p.rstrip("\\").lower() != folder.rstrip("\\").lower()]
+    return ";".join(keep)
+
+
+def cmd_uninstall() -> int:
+    """Remove the installed lab.exe, its PATH entry and its login launcher. Settings are left alone."""
+    if not getattr(sys, "frozen", False):
+        print("This copy was installed with pip: run `python -m pip uninstall project-lab`.")
+        return 0
+    import winreg
+    from . import watch
+    exe = Path(sys.executable)
+    if input(f"Remove {exe.parent} and the approval helper's login launcher? [y/N] ").strip().lower() not in ("y", "yes"):
+        return 1
+    watch.uninstall()
+    with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment", 0, winreg.KEY_READ | winreg.KEY_WRITE) as key:
+        try:
+            current, kind = winreg.QueryValueEx(key, "Path")
+            winreg.SetValueEx(key, "Path", 0, kind, remove_from_path(current, str(exe.parent)))
+        except FileNotFoundError:
+            pass
+    # a running program cannot delete itself: let a detached shell do it a moment after we exit
+    subprocess.Popen(f'cmd /c ping -n 3 127.0.0.1 >nul & rmdir /s /q "{exe.parent}"', shell=True,
+                     creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), close_fds=True)
+    print("Removed. Left in place: ~/.lab (settings), the lab block in ~/.ssh/config, and the \"lab\" entry in\n"
+          "Claude Desktop's config. Delete them by hand if you want those gone too.")
+    return 0
+
+
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     try:
+        if argv[:1] == ["uninstall"]:
+            return cmd_uninstall()
+        if argv[:1] in (["version"], ["--version"]):
+            from . import __version__
+            print(f"lab {__version__} (this PC)")
+            return 0
         if argv[:1] == ["setup"]:
             return cmd_setup(argv[1:])
+        if argv[:1] == ["connect"]:
+            from . import connect
+            return connect.run(argv[1:])
         cfg = load_config()
         if argv[:1] == ["watch"]:
             from . import watch

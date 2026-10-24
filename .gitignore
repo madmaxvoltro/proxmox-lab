@@ -10,3 +10,7 @@ ts-authkey
 *.egg-info/
 build/
 dist/
+
+*.spec
+.venv/
+*.egg-info/

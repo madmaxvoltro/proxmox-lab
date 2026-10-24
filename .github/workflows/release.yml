@@ -1,0 +1,128 @@
+name: Release
+
+# Push a tag like v0.1.0 to publish a release: tests run, lab.exe is built for Windows x64 and ARM64,
+# and everything is attached to the GitHub release together with SHA256SUMS.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    name: verify the tag and run the tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: The tag must match the version in the code
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          grep -q "^version = \"${version}\"" pyproject.toml || { echo "pyproject.toml version is not ${version}"; exit 1; }
+          grep -q "__version__ = \"${version}\"" src/lab/__init__.py || { echo "src/lab/__init__.py version is not ${version}"; exit 1; }
+      - run: python -m unittest discover -s tests -t .
+
+  windows-x64:
+    name: lab.exe (Windows x64)
+    needs: verify
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip pyinstaller
+          pyinstaller --onefile --noconfirm --clean --name lab-windows-x64 --paths src `
+            --add-data "src/lab/data;lab/data" --collect-submodules lab packaging/lab_exe.py
+      - name: Smoke test the binary
+        shell: pwsh
+        run: |
+          ./dist/lab-windows-x64.exe version
+          ./dist/lab-windows-x64.exe distros
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lab-windows-x64
+          path: dist/lab-windows-x64.exe
+
+  windows-arm64:
+    name: lab.exe (Windows ARM64)
+    needs: verify
+    runs-on: windows-11-arm
+    continue-on-error: true   # the release still goes out if this runner is unavailable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip pyinstaller
+          pyinstaller --onefile --noconfirm --clean --name lab-windows-arm64 --paths src `
+            --add-data "src/lab/data;lab/data" --collect-submodules lab packaging/lab_exe.py
+      - name: Smoke test the binary
+        shell: pwsh
+        run: |
+          ./dist/lab-windows-arm64.exe version
+          ./dist/lab-windows-arm64.exe distros
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lab-windows-arm64
+          path: dist/lab-windows-arm64.exe
+
+  package:
+    name: host package
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create the tarball the host installer downloads
+        run: git archive --format=tar.gz --prefix="project-lab-${GITHUB_REF_NAME}/" -o "project-lab-${GITHUB_REF_NAME}.tar.gz" HEAD src LICENSE README.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: project-lab-source
+          path: project-lab-*.tar.gz
+
+  publish:
+    name: publish the release
+    needs: [windows-x64, windows-arm64, package]
+    if: ${{ !cancelled() && needs.package.result == 'success' && needs['windows-x64'].result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: assets
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cp install.sh install.ps1 assets/
+          cd assets
+          sha256sum project-lab-*.tar.gz lab-windows-*.exe > SHA256SUMS
+          cat SHA256SUMS
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<'EOF'
+          ## Install
+
+          **Proxmox host** (as root):
+          ```bash
+          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | bash
+          ```
+
+          **Windows PC** (PowerShell):
+          ```powershell
+          irm https://raw.githubusercontent.com/${{ github.repository }}/main/install.ps1 | iex
+          ```
+
+          Files are checked against `SHA256SUMS` by both installers. `lab.exe` is not code-signed.
+          EOF
+          gh release create "${GITHUB_REF_NAME}" assets/* --title "${GITHUB_REF_NAME}" --generate-notes --notes-file notes.md

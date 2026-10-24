@@ -1,3 +1,4 @@
+from lab import __version__ as lab_version
 import json
 import tempfile
 import unittest
@@ -266,7 +267,7 @@ class CLITest(unittest.TestCase):
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             self.assertEqual(main(["--json", "version"]), 0)
-        self.assertEqual(json.loads(buf.getvalue())["version"], "0.0.1")
+        self.assertEqual(json.loads(buf.getvalue())["version"], lab_version)
 
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):

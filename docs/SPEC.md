@@ -83,7 +83,7 @@ max_running_vms = 6          # creates beyond these need human approval
 [archive]
 keep         = 1
 [tailscale]
-base_tag     = "tag:server"
+base_tag     = "tag:lab"      # dedicated: no grants of its own, so project VMs inherit nothing from your servers
 owner_tag_prefix = "tag:user-"
 oauth_file = "/etc/project-lab/ts-oauth"   # 0600 root; OAuth client mints per-VM keys (Q10)
 [idle]
@@ -202,7 +202,7 @@ Always overridable with `--no-setup`. Runs only inside the VM (isolation is the 
 
 ## 9. Tailscale lifecycle
 
-Decisions: ephemeral, tagged (`tag:server` + owner tag `tag:user-<owner>`), pre-approved auth key (shared reusable, or minted per VM — see Q10) delivered at runtime through the QEMU guest agent (`qm guest exec --pass-stdin`), not cloud-init (decision Q1); join with `tailscale up --ssh --hostname lab-NAME`. No SSH keys to manage; access governed by tailnet ACL `ssh` rules.
+Decisions: ephemeral, tagged (`tag:lab` + owner tag `tag:user-<owner>`), pre-approved auth key (shared reusable, or minted per VM — see Q10) delivered at runtime through the QEMU guest agent (`qm guest exec --pass-stdin`), not cloud-init (decision Q1); join with `tailscale up --ssh --hostname lab-NAME`. No SSH keys to manage; access governed by tailnet ACL `ssh` rules.
 
 | Event | Action |
 |---|---|
@@ -267,7 +267,7 @@ Flags: `--keep-active` (verify only, don't remove), `--no-boot-test` (discourage
 ## 15. Open questions
 
 - ~~Q1 Key delivery~~ — **decided**: guest-agent stdin (§9).
-- ~~Q2~~ **decided**: VMs get `tag:server` + an owner tag (`tag:user-<name>`), never an AI tag; existing tags are `server` (admins can SSH) and `userapp` (apps open to other users). `lab init` prints the missing `tagOwners` / `ssh` ACL snippet. See Q10 for the key-minting consequence.
+- ~~Q2~~ **decided**: VMs get a dedicated base tag (`tag:lab`; changed from `tag:server` after the first host trial showed that reusing a server tag hands project VMs the server tag's grants) + an owner tag (`tag:user-<name>`), never an AI tag. `lab setup` prints the missing `tagOwners` / `grants` / `ssh` ACL snippet. See Q10 for the key-minting consequence.
 - ~~Q3~~ **decided**: login user = the owner's lab username (same in every distro), created by cloud-init, passwordless sudo, password locked (access only via Tailscale SSH / guest agent).
 - ~~Q4~~ **decided**: per-project GitHub deploy key generated in the VM (public key printed for the user to add); dotfiles repo URL is a config setting, applied on first boot if set.
 - ~~Q5~~ **decided**: idle = 7 days, no SSH session, CPU < 5%; stop only; disabled until enabled.
@@ -275,7 +275,7 @@ Flags: `--keep-active` (verify only, don't remove), `--no-boot-test` (discourage
 - ~~Q7~~ **decided**: MCP elicitation first, `lab approve ID` terminal fallback.
 - ~~Q8~~ **decided**: guest agent for one-shot commands and file transfer, Tailscale SSH for interactive/long-running.
 - ~~Q9~~ **decided** (my call): per-family package maps cover only base packages and the docker/go/rust/uv modules in v1.
-- ~~Q10~~ **decided**: a Tailscale OAuth client (scope `auth_keys` write, restricted to `tag:server` and `tag:user-*`) mints a single-use, short-expiry, ephemeral, pre-approved key per VM with `tag:server` + `tag:user-<owner>`. Credentials in `/etc/project-lab/ts-oauth` (0600 root); the minted key is piped via guest-agent stdin and never stored. This replaces the static `ts-authkey` file in §4/§9. Enrolment fails closed if minting fails.
+- ~~Q10~~ **decided**: a Tailscale OAuth client (scope `auth_keys` write, restricted to `tag:lab` and `tag:user-*`) mints a single-use, short-expiry, ephemeral, pre-approved key per VM with `tag:lab` + `tag:user-<owner>`. Credentials in `/etc/project-lab/ts-oauth` (0600 root); the minted key is piped via guest-agent stdin and never stored. This replaces the static `ts-authkey` file in §4/§9. Enrolment fails closed if minting fails.
 - ~~Q11~~ **decided**: `lab init` makes the person running it the first admin (tailnet login via `tailscale whois`); `lab user add <tailnet-login> <name>` (admin) adds others.
 - ~~Q12~~ **decided**: users see only their own projects and archives; admins see all. A name clash with another user's project returns a generic "name unavailable" without revealing the owner.
 
@@ -334,7 +334,7 @@ Multi-user is in v1 (decision).
 - **Identity**: users reach the host over Tailscale SSH; the host resolves the caller's tailnet login (`tailscale whois` on the connecting address) and maps it to a lab user stored in the lab database (`users` table: login, name, role, quota overrides; managed with `lab user ...`, first admin created by `lab init`). Unknown logins are refused. No new passwords or tokens.
 - **Roles**: `admin` (sees and manages everything, exempt from quotas) and `user` (own projects only; cannot see other users' projects or archives).
 - **Ownership**: every project records `owner`. Stored in the VM description/tag and DB. Owner is the login user inside the VM (§15 Q3) and drives the tailnet owner tag.
-- **Tags**: each VM joins the tailnet with `tag:server` + `tag:user-<owner>` (ACL snippet printed by `lab init`; key minting per Q10). Admins reach every VM through the `server` tag rule; an owner reaches their own through the owner-tag rule.
+- **Tags**: each VM joins the tailnet with `tag:lab` + `tag:user-<owner>` (ACL snippet printed by `lab init`; key minting per Q10). Admins reach every VM through the `tag:lab` rule; an owner reaches their own through the owner-tag rule.
 - **Quotas** (per user, configurable, admins exempt): max running VMs, total vCPU, total RAM, total fast-disk GB, optional max archive GB. Checked on create, resize, start, restore. Refusals state which limit and the current usage.
 - **Visibility**: `lab list` filters by owner for users; `--all` for admins. Protect and attach rules in §16 apply per owner.
 - **Locks/IDs**: VMID range is shared; names are globally unique (`lab-<name>`), with an optional `<owner>/` display prefix considered later.

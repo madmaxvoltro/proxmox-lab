@@ -107,7 +107,8 @@ SAMPLES = {
 
 def show_popup(item: dict, alive, *, autoclose: float | None = None, selftest: str | None = None,
                expanded: bool = False, poll: float = 3.0, popen=None, script: Path = SCRIPT,
-               sleep=time.sleep, monotonic=time.monotonic) -> bool | None:
+               sleep=time.sleep, monotonic=time.monotonic, backdrop: str | None = None,
+               theme: str | None = None, monitor: str | None = None) -> bool | None:
     """The native popup (blurred screen, Apple-style card). True = Approve, False = Deny (Esc or
     closing also denies), None = settled elsewhere or timed out. Raises PopupError if it cannot show,
     so the caller can fall back to the plain Tk window."""
@@ -119,7 +120,8 @@ def show_popup(item: dict, alive, *, autoclose: float | None = None, selftest: s
     if os.name != "nt" or not exe or not script.exists():
         raise PopupError("the native popup needs Windows PowerShell")
     payload = {**describe(item), "id": item.get("id"), "expires_in": item.get("expires_in", 600),
-               "autoclose": autoclose, "selftest": selftest, "expanded": expanded}
+               "autoclose": autoclose, "selftest": selftest, "expanded": expanded,
+               "backdrop": backdrop, "theme": theme, "monitor": monitor}
     with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as fh:
         json.dump(payload, fh)
     try:
@@ -253,8 +255,17 @@ def startup_dir() -> Path:
     return Path(os.environ.get("APPDATA", str(Path.home()))) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
 
 
+def launcher_args() -> list:
+    """How to start the watcher again: the packaged lab.exe, or `python -m lab.entry`."""
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "watch"]
+    return [sys.executable, "-m", "lab.entry", "watch"]
+
+
 def startup_script(python: str | None = None) -> str:
     """A tiny script for the Startup folder that runs the watcher with no console window."""
+    if python is None and getattr(sys, "frozen", False):
+        return f'CreateObject("WScript.Shell").Run """{sys.executable}"" watch", 0, False\r\n'
     py = Path(python or sys.executable)
     pyw = py.with_name("pythonw.exe")
     exe = pyw if pyw.exists() else py
@@ -292,7 +303,8 @@ def main(cfg: dict, argv: list) -> int:
         opt = lambda name, default=None: argv[argv.index(name) + 1] if name in argv else default
         auto = opt("--autoclose")
         result = show_popup(SAMPLES[kind], lambda: True, autoclose=float(auto) if auto else None,
-                            selftest=opt("--selftest"), expanded="--expanded" in argv)
+                            selftest=opt("--selftest"), expanded="--expanded" in argv,
+                            backdrop=opt("--backdrop"), theme=opt("--theme"), monitor=opt("--monitor"))
         print({True: "Approve", False: "Deny", None: "closed without an answer"}[result])
         return 0
     once = "--once" in argv

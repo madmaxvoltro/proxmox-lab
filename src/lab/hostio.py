@@ -150,6 +150,10 @@ class HostIO:
         fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(text)
+        try:
+            os.chmod(path, mode)  # os.open only applies the mode to files it creates
+        except OSError:
+            pass
 
     def fetch_file(self, url: str, dest: str, timeout: float = 60, on_progress=None) -> None:
         """Download to dest via a .part file so a failed download never looks complete.

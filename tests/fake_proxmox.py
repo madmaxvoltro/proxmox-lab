@@ -33,6 +33,7 @@ class FakeProxmox(Runner):
         self.ignore_shutdown = False
         self.line_script = []  # (predicate(argv), [output lines]) replayed to on_line callbacks
         self.streamed = []  # per call: was a progress callback supplied?
+        self.tailscale_up = True
         self.ips_in_use = set()  # addresses that answer a ping (something else already uses them)
         self.backup_size = 1 << 30
         self.hooks = []  # (predicate, fn) run before dispatch; fn may raise to simulate a crash/interrupt
@@ -108,6 +109,8 @@ class FakeProxmox(Runner):
             return self._vzdump(a)
         if cmd == "qmrestore":
             return self._qmrestore(a)
+        if cmd == "tailscale":  # only `status` is needed by setup's pre-flight
+            return self._ok(a, "100.64.0.1 pve linux -") if self.tailscale_up else self._err(a, "Tailscale is stopped", 1)
         if cmd == "ping":  # ping -c 1 -W 1 IP
             return self._ok(a) if a[-1] in self.ips_in_use else self._err(a, "100% packet loss", 1)
         if cmd == "zstd":

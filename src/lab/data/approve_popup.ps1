@@ -1,4 +1,4 @@
-# Approval popup for `lab watch`: the whole desktop blurred and dimmed, one Apple-style card on top.
+# Approval popup for `lab watch`: one monitor blurred (no tint), one Apple-style card on top.
 # Exit codes: 10 approved, 11 denied (Esc / closed), 12 timed out, 13 self-test could not focus, 20 error.
 param([Parameter(Mandatory = $true)][string]$Payload)
 $ErrorActionPreference = 'Stop'
@@ -26,6 +26,7 @@ public static class LabWin {
     try {
         $light = ((Get-ItemPropertyValue 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize' 'AppsUseLightTheme') -eq 1)
     } catch { }
+    if ($p.theme -eq 'light') { $light = $true } elseif ($p.theme -eq 'dark') { $light = $false }
     if ($light) {
         $c = @{ card = '#F7FFFFFF'; edge = '#1F000000'; fg = '#1D1D1F'; fg2 = '#515154'; fg3 = '#86868B'; panel = '#F2F2F7';
                 btn2 = '#E8E8ED'; btn2h = '#DCDCE2'; blue = '#007AFF'; blueh = '#0A6BE0'; red = '#FF3B30'; redh = '#E02D23'; dim = '#40000000' }
@@ -37,10 +38,29 @@ public static class LabWin {
     $primaryHover = if ($p.danger) { $c.redh } else { $c.blueh }
 
     # ---- the blurred backdrop: snapshot all screens, shrink (cheap, smooth), let WPF blur it ---------------
-    $vs = [System.Windows.Forms.SystemInformation]::VirtualScreen
+    # one monitor only: the one the mouse is on (that is where you are working), or the primary one
+    $screen = if ($p.monitor -eq 'primary') { [System.Windows.Forms.Screen]::PrimaryScreen }
+              else { [System.Windows.Forms.Screen]::FromPoint([System.Windows.Forms.Cursor]::Position) }
+    $vs = $screen.Bounds   # physical pixels (the process is DPI aware)
     $shot = New-Object System.Drawing.Bitmap $vs.Width, $vs.Height
     $gfx = [System.Drawing.Graphics]::FromImage($shot)
-    $gfx.CopyFromScreen($vs.Left, $vs.Top, 0, 0, $shot.Size)
+    if ($p.backdrop -eq 'gradient') {
+        # a neutral wallpaper instead of the real desktop (used for documentation screenshots)
+        $gfx.SmoothingMode = 'AntiAlias'
+        $rect = New-Object System.Drawing.Rectangle 0, 0, $vs.Width, $vs.Height
+        $lg = New-Object System.Drawing.Drawing2D.LinearGradientBrush($rect, [System.Drawing.Color]::FromArgb(255, 24, 36, 92),
+            [System.Drawing.Color]::FromArgb(255, 138, 52, 140), 45.0)
+        $gfx.FillRectangle($lg, $rect)
+        $blobs = @(@(0.18, 0.25, 0.55, 255, 90, 60, 170), @(0.78, 0.2, 0.45, 255, 255, 120, 90), @(0.55, 0.8, 0.6, 255, 40, 170, 230),
+                   @(0.1, 0.85, 0.4, 255, 200, 80, 190))
+        foreach ($b in $blobs) {
+            $d = [int]($vs.Width * $b[2]); $x = [int]($vs.Width * $b[0] - $d / 2); $y = [int]($vs.Height * $b[1] - $d / 2)
+            $br = New-Object System.Drawing.SolidBrush ([System.Drawing.Color]::FromArgb(150, $b[4], $b[5], $b[6]))
+            $gfx.FillEllipse($br, $x, $y, $d, $d)
+        }
+    } else {
+        $gfx.CopyFromScreen($vs.Left, $vs.Top, 0, 0, $shot.Size)
+    }
     $gfx.Dispose()
     $sw = [int][Math]::Max(16, $vs.Width / 5)
     $sh = [int][Math]::Max(16, $vs.Height / 5)
@@ -69,7 +89,6 @@ public static class LabWin {
       <Image x:Name="Bg" Stretch="Fill" Margin="-60" RenderOptions.BitmapScalingMode="HighQuality">
         <Image.Effect><BlurEffect Radius="22" KernelType="Gaussian" RenderingBias="Performance"/></Image.Effect>
       </Image>
-      <Rectangle Fill="[[DIM]]"/>
     </Grid>
     <Border x:Name="Card" Width="440" HorizontalAlignment="Left" VerticalAlignment="Top" CornerRadius="22"
             Background="[[CARD]]" BorderBrush="[[EDGE]]" BorderThickness="1" RenderTransformOrigin="0.5,0.5">
@@ -121,10 +140,13 @@ public static class LabWin {
     foreach ($k in $subst.Keys) { $xaml = $xaml.Replace("[[$k]]", $subst[$k]) }
     $win = [System.Windows.Markup.XamlReader]::Parse($xaml)
 
-    $win.Left = [System.Windows.SystemParameters]::VirtualScreenLeft
-    $win.Top = [System.Windows.SystemParameters]::VirtualScreenTop
-    $win.Width = [System.Windows.SystemParameters]::VirtualScreenWidth
-    $win.Height = [System.Windows.SystemParameters]::VirtualScreenHeight
+    # window = exactly that monitor, in device-independent units (system DPI is what WPF scales by)
+    $dpi = [System.Drawing.Graphics]::FromHwnd([IntPtr]::Zero).DpiX
+    $f = 96.0 / $dpi
+    $win.Left = $vs.Left * $f
+    $win.Top = $vs.Top * $f
+    $win.Width = $vs.Width * $f
+    $win.Height = $vs.Height * $f
 
     $brush = New-Object System.Windows.Media.BrushConverter
     $find = { param($n) $win.FindName($n) }
@@ -208,10 +230,8 @@ public static class LabWin {
     $win.Add_Loaded({
         # center the card on the primary monitor, a little above the middle (like a macOS alert)
         $win.UpdateLayout()
-        $px = [System.Windows.SystemParameters]::PrimaryScreenWidth
-        $py = [System.Windows.SystemParameters]::PrimaryScreenHeight
-        $left = $px / 2 - $card.ActualWidth / 2 - [System.Windows.SystemParameters]::VirtualScreenLeft
-        $top = $py * 0.44 - $card.ActualHeight / 2 - [System.Windows.SystemParameters]::VirtualScreenTop
+        $left = $win.ActualWidth / 2 - $card.ActualWidth / 2
+        $top = $win.ActualHeight * 0.44 - $card.ActualHeight / 2
         $card.Margin = New-Object System.Windows.Thickness($left, [Math]::Max(20, $top), 0, 0)
         & $animate $root ([System.Windows.UIElement]::OpacityProperty) 0 1 180
         & $animate $scale ([System.Windows.Media.ScaleTransform]::ScaleXProperty) 0.94 1 240

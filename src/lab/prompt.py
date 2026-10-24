@@ -14,11 +14,19 @@ class Prompter:
     def ask(self, label: str, default: str | None = None) -> str:
         raise NotImplementedError
 
+    def secret(self, label: str) -> str:
+        """Like ask(), but nothing is echoed to the screen."""
+        raise NotImplementedError
+
     def info(self, message: str) -> None:
         print(message)
 
 
 class TerminalPrompter(Prompter):
+    def secret(self, label):
+        import getpass
+        return getpass.getpass(f"{label} (hidden): ").strip()
+
     def choose(self, label, options, default=None):
         print(f"\n{label}")
         for i, (value, desc) in enumerate(options, 1):
@@ -72,6 +80,9 @@ class ScriptedPrompter(Prompter):
         if value is None:
             raise UsageError(f"no answer for: {label}")
         return str(value)
+
+    def secret(self, label):
+        return self.ask(label)
 
     def info(self, message):
         self.log.append(message)

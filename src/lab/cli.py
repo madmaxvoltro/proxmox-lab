@@ -15,6 +15,7 @@ from . import config as config_mod
 from . import init as init_mod
 from . import mcp as mcp_mod
 from . import progress
+from . import setup as setup_mod
 from .approvals import Approvals, state_of
 from .db import DB
 from .errors import LabError, PreconditionError, UsageError
@@ -46,6 +47,8 @@ def build_parser() -> argparse.ArgumentParser:
     i.add_argument("--bridge")
     i.add_argument("--yes", action="store_true", help="non-interactive: accept confirmations")
 
+    st_ = sub.add_parser("setup", help="guided setup of a fresh Proxmox host (safe to re-run)")
+    st_.add_argument("--skip-template", action="store_true", help="do not offer to build the base image")
     sub.add_parser("doctor", help="read-only health and drift checks")
 
     c = sub.add_parser("create", help="create a project VM")
@@ -131,6 +134,7 @@ class Ctx:
 
     def __init__(self, args):
         self.args = args
+        self.dry_run = args.dry_run
         self.cfg = config_mod.load(args.config)
         real = SubprocessRunner()
         self.runner = DryRunRunner(real) if args.dry_run else real
@@ -197,6 +201,11 @@ def cmd_init(ctx):
     for n in res.notes:
         print("note: " + n)
     print(f"\nConfig written to {cfg_file}. Next: `lab doctor`, then `lab template add {res.config.vm.default_distro}`.")
+
+
+def cmd_setup(ctx):
+    ui = TerminalPrompter()
+    return setup_mod.run(ctx, ui, skip_template=ctx.args.skip_template, config_file=ctx.args.config)
 
 
 def cmd_doctor(ctx):
@@ -405,6 +414,8 @@ def _run(ctx, args) -> int:
         _emit(args, sorted(cat), "\n".join(f"  {d.id:<16} {d.family}  user={d.default_user}" for d in cat.values()))
     elif args.cmd == "init":
         cmd_init(ctx)
+    elif args.cmd == "setup":
+        return cmd_setup(ctx)
     elif args.cmd == "doctor":
         return cmd_doctor(ctx)
     elif args.cmd == "template":
