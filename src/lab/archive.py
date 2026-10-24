@@ -13,7 +13,8 @@ recovery rolls forward."""
 import json
 import logging
 
-from . import netutil, quotas
+from . import netutil, progress, quotas
+from .progress import human_bytes
 from .cloudinit import user_data
 from .errors import CommandError, LabError, PreconditionError, VerificationError
 from .units import hostname
@@ -74,15 +75,18 @@ class ArchiveOps:
             self.db.update_project(name, state="archiving")
             step = "shutdown"
             try:
+                progress.plan(self.say, 4 + (1 if boot_test else 0) + (0 if keep_active else 1))
                 self._persist(jid, step, st)
                 if st["was_running"]:
-                    self.say(f"stopping {name}")
+                    self.say(f"Stopping {name} (leaving the tailnet, graceful shutdown)")
                     self._shutdown(row, force=False)
+                else:
+                    self.say(f"{name} is already stopped")
                 st["before"] = [b["volid"] for b in self.px.backups(self._archive_disk(), row["vmid"])]
                 step = "backup"
                 self._persist(jid, step, st)
-                self.say(f"backing up {name} to {self._archive_disk()}")
-                self.px.vzdump(row["vmid"], self._archive_disk())
+                self.say(f"Backing up {name} to {self._archive_disk()}")
+                self.px.vzdump(row["vmid"], self._archive_disk(), on_line=progress.line_cb(self.say))
                 st["volid"] = self._new_backup(row, st)
                 step = "verify"
                 self._persist(jid, step, st)
@@ -96,7 +100,7 @@ class ArchiveOps:
             self._persist(jid, "commit", st)  # point of no return: from here recovery rolls forward
             self._commit_archive(row, st)
             if keep_active:
-                self.say("verified; keeping the active VM as requested")
+                progress.detail(self.say, "verified; keeping the active VM as requested")
                 self._finish_keep_active(row, st, jid)
                 return self.status(name)
             self._finish_archive(row, jid, st)
@@ -122,14 +126,16 @@ class ArchiveOps:
             if size < self.min_backup_bytes:
                 raise VerificationError(f"backup is implausibly small ({size} bytes)")
             path = px.storage_path(volid)
-            self.say("verifying archive integrity")
+            self.say(f"Verifying the archive ({human_bytes(size)})")
+            progress.detail(self.say, "checking compression integrity (zstd -t)")
             px.test_archive(path)
-            sha = self.io.sha256(path)
+            progress.detail(self.say, "computing the checksum")
+            sha = self.io.sha256(path, on_progress=progress.bytes_cb(self.say, "hashed"))
             tmp = px.nextid(*cfg.vm.vmid_range, taken=self.db.used_vmids())
             st["tmp_vmid"] = tmp
             self._persist(jid, "verify", st)
-            self.say(f"trial restore to temporary VM {tmp} (network disconnected)")
-            px.restore(volid, tmp, cfg.storage.fast_disk)
+            self.say(f"Trial restore into temporary VM {tmp} (network disconnected)")
+            px.restore(volid, tmp, cfg.storage.fast_disk, on_line=progress.line_cb(self.say))
             px.set(tmp, name=verify_name(name), tags="lab;lab-verify")
             px.disconnect_network(tmp)
             if boot_test:
@@ -142,9 +148,11 @@ class ArchiveOps:
             raise VerificationError(str(e)) from e
 
     def _boot_test(self, row, tmp: int) -> None:
-        self.say("boot test of the restored copy")
+        self.say("Boot test of the restored copy")
         self.px.start(tmp)
-        self.px.wait_agent(tmp, self.verify_timeout, sleep=self.sleep, monotonic=self.monotonic)
+        self.px.wait_agent(tmp, self.verify_timeout, sleep=self.sleep, monotonic=self.monotonic,
+                           on_wait=progress.wait_cb(self.say))
+        progress.detail(self.say, "booted; checking the filesystem, the owner account and the hostname")
         check = f'findmnt -n / >/dev/null && id {row["owner"]} >/dev/null && [ "$(hostname)" = {hostname(row["name"])} ]'
         res = self.px.guest_exec(tmp, ["sh", "-c", check], check=False, timeout=60)
         if res.get("exitcode", 1) != 0:
@@ -238,7 +246,7 @@ class ArchiveOps:
                                             "refusing to destroy the VM")
                 if vm["status"] == "running":
                     raise PreconditionError(f"{name} is running after its backup; refusing to destroy it")
-                self.say(f"removing {name} from the fast disk")
+                self.say(f"Removing {name} from the fast disk (the verified archive is kept)")
                 self.px.destroy(vmid)
         self._persist(jid, "destroyed", st)
         self.io.remove(self.px.storage_path(self._snippet_volid(name)))
@@ -294,8 +302,9 @@ class ArchiveOps:
             self._persist(jid, "restore", {"vmid": vmid})
             snippet = self.px.storage_path(self._snippet_volid(name))
             try:
-                self.say(f"restoring {name} to VMID {vmid} on {fast}")
-                self.px.restore(arc["volid"], vmid, fast)
+                progress.plan(self.say, 1 + (2 if start else 0) + (1 if start and self._tailnet_managed(row) else 0))
+                self.say(f"Restoring {name} to VMID {vmid} on {fast}")
+                self.px.restore(arc["volid"], vmid, fast, on_line=progress.line_cb(self.say))
                 self.px.set(vmid, name=host, tags=f"lab;owner-{owner}", cores=row["cpu"], memory=row["ram_mb"],
                             cicustom=f"user={self._snippet_volid(name)}", **netutil.ipconfig(net, ip))
                 self.io.write_text(snippet, user_data(name, owner))
@@ -306,13 +315,18 @@ class ArchiveOps:
             self.db.journal_finish(jid, "ok")
         if start:
             try:
+                self.say(f"Starting {name}")
                 self.px.start(vmid)
-                self.px.wait_agent(vmid, self.agent_timeout, sleep=self.sleep, monotonic=self.monotonic)
+                self.say("Waiting for the guest agent")
+                self.px.wait_agent(vmid, self.agent_timeout, sleep=self.sleep, monotonic=self.monotonic,
+                                   on_wait=progress.wait_cb(self.say))
                 self.db.update_project(name, state="running")  # truthful even if enrolment fails below
                 fields = {}
                 if self._tailnet_managed(row):
+                    self.say("Rejoining the tailnet with a fresh identity")
                     self.ts.reset_identity(vmid)
                     en = self.ts.enroll(vmid, host, owner)
+                    progress.detail(self.say, f"{en.dns_name} ({en.ip})")
                     fields.update(tailnet_ip=en.ip, tailnet_name=en.dns_name)
                 if fields:
                     self.db.update_project(name, **fields)

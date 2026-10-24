@@ -9,7 +9,7 @@ import logging
 import time
 from datetime import datetime, timezone
 
-from . import distros, netutil
+from . import distros, netutil, progress
 from .config import Config
 from .errors import LabError, PreconditionError, VerificationError
 from .hostio import HostIO
@@ -83,6 +83,7 @@ class TemplateBuilder:
         self.cat = catalogue if catalogue is not None else distros.load()
         self.sleep, self.monotonic, self.say = sleep, monotonic, progress
         self.agent_timeout, self.poll = agent_timeout, poll
+        self.cloudinit_timeout = 900
         self.dry_run = isinstance(px.r, DryRunRunner)
 
     # lookup ----------------------------------------------------------------
@@ -114,16 +115,22 @@ class TemplateBuilder:
     # image -----------------------------------------------------------------
     def fetch_image(self, d: distros.Distro) -> tuple:
         """Download (or reuse) the cloud image and verify it against the published checksum."""
+        self.say("Fetching the published checksum")
+        progress.detail(self.say, d.checksum_url)
         expected = distros.find_checksum(self.io.fetch_text(d.checksum_url), d.checksum_name, d.checksum_type)
         path = f"{self.cfg.paths.image_dir}/{d.image_file}"
-        if self.io.exists(path) and self.io.sha256(path, d.checksum_type) == expected:
-            self.say(f"image cached and verified: {path}")
-            return path, expected
-        self.say(f"downloading {d.image_url}")
-        self.io.fetch_file(d.image_url, path)
+        self.say("Getting the cloud image")
+        if self.io.exists(path):
+            progress.detail(self.say, f"checking the cached copy: {path}")
+            if self.io.sha256(path, d.checksum_type, progress.bytes_cb(self.say, "hashing")) == expected:
+                progress.detail(self.say, "cached copy is intact; no download needed")
+                return path, expected
+        progress.detail(self.say, f"downloading {d.image_url}")
+        self.io.fetch_file(d.image_url, path, on_progress=progress.bytes_cb(self.say, "downloaded"))
         if not self.io.exists(path):  # dry-run
             return path, expected
-        actual = self.io.sha256(path, d.checksum_type)
+        progress.detail(self.say, f"verifying the {d.checksum_type}")
+        actual = self.io.sha256(path, d.checksum_type, progress.bytes_cb(self.say, "hashing"))
         if actual != expected:
             self.io.remove(path)
             raise VerificationError(
@@ -141,13 +148,14 @@ class TemplateBuilder:
         if old and not replace:
             raise PreconditionError(f"template for {distro_id} already exists (VMID {old['vmid']}); use `lab template update`")
 
+        progress.plan(self.say, 11)
         image, image_hash = self.fetch_image(d)
         vmid = self.px.nextid(*cfg.vm.template_range)
         build_name = d.template_name + BUILD_SUFFIX
         snippet_id = f"lab-build-{d.id}.yaml"
         snippet_volid = f"{cfg.storage.snippet_disk}:snippets/{snippet_id}"
         snippet_path = self.px.storage_path(snippet_volid)
-        self.say(f"building {d.template_name} as VMID {vmid}")
+        self.say(f"Creating the build VM (VMID {vmid})")
         created = False
         try:
             self.io.write_text(snippet_path, build_user_data(d))
@@ -158,21 +166,31 @@ class TemplateBuilder:
                 agent="enabled=1", serial0="socket", vga="serial0", tags=TAG,
             )
             created = True
-            self.px.set(vmid, scsi0=f"{fast}:0,import-from={image},discard=on,ssd=1")
+            progress.detail(self.say, f"{build_name} on bridge {cfg.network.bridge}")
+            self.say(f"Importing the image into {fast}")
+            self.px.set(vmid, scsi0=f"{fast}:0,import-from={image},discard=on,ssd=1",
+                        on_line=progress.line_cb(self.say))
+            self.say("Configuring cloud-init, network and disk size")
             build_ip = netutil.allocate(cfg.network, self.db.used_ips() if self.db else set(), self.px.r)
             if build_ip:
-                self.say(f"build VM address: {build_ip}")
+                progress.detail(self.say, f"build VM address: {build_ip}")
             self.px.set(vmid, ide2=f"{fast}:cloudinit", boot="order=scsi0", **netutil.ipconfig(cfg.network, build_ip),
                         ciuser=d.default_user, cicustom=f"user={snippet_volid}")
             self.px.resize(vmid, "scsi0", f"{to_gib(cfg.vm.default_disk)}G")
+            self.say("Booting the build VM")
             self.px.start(vmid)
             self._wait_agent(vmid)
-            self._guest(vmid, ["cloud-init", "status", "--wait"], "cloud-init did not finish cleanly", 900)
+            self.say("Installing packages (cloud-init first boot)")
+            self._wait_cloud_init(vmid)
+            self.say("Checking the toolchain")
             self._guest(vmid, ["sh", "-c", VERIFY_CMD], "toolchain verification failed", 60)
+            self.say("Generalising the image (host keys, machine-id, Tailscale state)")
             self._guest(vmid, ["sh", "-c", GENERALISE_CMD], "generalising the image failed", 120)
+            self.say("Shutting down")
             self.px.shutdown(vmid)
             if not self.dry_run and self.px.status(vmid) != "stopped":
                 raise TemplateError(f"VM {vmid} did not shut down; leaving it for inspection")
+            self.say("Converting to a template")
             # the build VM's address and user-data must not leak into clones (create sets its own)
             self.px.set(vmid, delete="cicustom,ipconfig0,nameserver", name=d.template_name,
                         description=describe(d, image_hash))
@@ -183,14 +201,23 @@ class TemplateBuilder:
             self.io.remove(snippet_path)
             raise
         self.io.remove(snippet_path)
-        self.say(f"template {d.template_name} ready (VMID {vmid})")
+        progress.detail(self.say, f"{d.template_name} is ready (VMID {vmid})")
         return vmid
 
     def _wait_agent(self, vmid: int) -> None:
         try:
-            self.px.wait_agent(vmid, self.agent_timeout, self.poll, sleep=self.sleep, monotonic=self.monotonic)
+            self.px.wait_agent(vmid, self.agent_timeout, self.poll, sleep=self.sleep, monotonic=self.monotonic,
+                               on_wait=progress.wait_cb(self.say))
         except ProxmoxError as e:
             raise TemplateError(str(e)) from e
+
+    def _wait_cloud_init(self, vmid: int) -> None:
+        try:
+            self.px.wait_cloud_init(vmid, self.cloudinit_timeout, self.poll, sleep=self.sleep,
+                                    monotonic=self.monotonic, on_wait=progress.wait_cb(self.say),
+                                    on_detail=lambda text, key: progress.detail(self.say, text, key))
+        except ProxmoxError as e:
+            raise TemplateError(f"cloud-init did not finish cleanly: {e}") from e
 
     def _guest(self, vmid: int, argv, failure: str, timeout: int) -> dict:
         res = self.px.guest_exec(vmid, argv, check=False, timeout=timeout)

@@ -1,6 +1,8 @@
 import tomllib
 import unittest
+from io import StringIO
 
+from lab.progress import Reporter
 from lab import config as config_mod
 from lab import doctor, hostio, netutil
 from lab import init as init_mod
@@ -169,10 +171,11 @@ class StaticTemplateTest(unittest.TestCase):
         fake, io = FakeProxmox(), make_io()
         cfg = static(make_cfg())
         tb = TemplateBuilder(cfg, Proxmox(fake), io, DB(":memory:"), catalogue=CATALOGUE, sleep=lambda s: None)
-        said = []
-        tb.say = said.append
+        out = StringIO()
+        tb.say = Reporter(out)
         vmid = tb.build("ubuntu-24.04")
-        self.assertIn("build VM address: 192.168.10.200", said)
+        tb.say.finish()
+        self.assertIn("build VM address: 192.168.10.200", out.getvalue())
         applied = [c for c in fake.calls if c[:3] == ["qm", "set", str(vmid)] and "--ipconfig0" in c]
         self.assertEqual(applied[0][applied[0].index("--ipconfig0") + 1], "ip=192.168.10.200/24,gw=192.168.10.1")
         conf = fake.vms[vmid]["config"]

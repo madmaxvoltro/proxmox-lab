@@ -110,7 +110,7 @@ class TemplateBuildTest(BuilderBase):
         self.assertIn(snippet, self.io.removed)
         self.assertNotIn(snippet, self.io.files)
         joined = "\n".join(self.fake.guest_log)
-        for step in ("cloud-init status --wait", "git --version", "tailscale version", "cloud-init clean"):
+        for step in ("cloud-init status", "git --version", "tailscale version", "cloud-init clean"):
             self.assertIn(step, joined)
         self.assertEqual(self.tb.default_template(), vmid)
         self.assertEqual([r["present"] for r in self.tb.list() if r["distro"] == "ubuntu-24.04"], [True])

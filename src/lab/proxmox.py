@@ -98,13 +98,14 @@ class Proxmox:
         return _json(self.r.run(argv))
 
     # mutating --------------------------------------------------------------
-    def clone(self, template: int, vmid: int, name: str, *, full: bool, storage: str | None = None) -> None:
+    def clone(self, template: int, vmid: int, name: str, *, full: bool, storage: str | None = None,
+              on_line=None) -> None:
         argv = ["qm", "clone", str(template), str(vmid), "--name", name]
         if full:
             argv += ["--full", "1"]
             if storage:
                 argv += ["--storage", storage]
-        self.r.run(argv)
+        self.r.run(argv, on_line=on_line)
 
     def create(self, vmid: int, **opts) -> None:
         argv = ["qm", "create", str(vmid)]
@@ -119,12 +120,41 @@ class Proxmox:
         return self.r.run(["qm", "agent", str(vmid), "ping"], check=False).ok
 
     def wait_agent(self, vmid: int, timeout: float = 300, poll: float = 3, *,
-                   sleep=time.sleep, monotonic=time.monotonic) -> None:
-        deadline = monotonic() + timeout
+                   sleep=time.sleep, monotonic=time.monotonic, on_wait=None) -> None:
+        start = monotonic()
+        deadline = start + timeout
         while not self.agent_ready(vmid):
-            if monotonic() > deadline:
+            now = monotonic()
+            if now > deadline:
                 raise ProxmoxError(f"guest agent did not come up within {timeout:.0f}s "
                                    "(no DHCP lease or package install failed?)")
+            if on_wait:
+                on_wait("Waiting for the guest agent", now - start, timeout)
+            sleep(poll)
+
+    def wait_cloud_init(self, vmid: int, timeout: float = 900, poll: float = 5, *, sleep=time.sleep,
+                        monotonic=time.monotonic, on_wait=None, on_detail=None) -> None:
+        """Poll `cloud-init status` until first-boot configuration finishes. While waiting it shows
+        the last line of the guest's cloud-init log, so long package installs are visible."""
+        start = monotonic()
+        while True:
+            res = self.guest_exec(vmid, ["cloud-init", "status"], check=False, timeout=30)
+            out = res.get("out-data") or ""
+            if "status: done" in out or "status: degraded" in out or res.get("exitcode") == 2:
+                return  # degraded / exit 2 = finished with recoverable errors
+            if "status: error" in out or res.get("exitcode") == 1:
+                tail = (res.get("err-data") or out).strip()[-300:]
+                raise ProxmoxError(f"cloud-init reported an error: {tail}")
+            now = monotonic()
+            if now - start > timeout:
+                raise ProxmoxError(f"cloud-init did not finish within {timeout:.0f}s")
+            if on_detail:
+                log = self.guest_exec(vmid, ["tail", "-n", "1", "/var/log/cloud-init-output.log"], check=False,
+                                      timeout=15).get("out-data") or ""
+                if log.strip():
+                    on_detail(log.strip()[-120:], "log")
+            if on_wait:
+                on_wait("Waiting for first-boot setup", now - start, timeout)
             sleep(poll)
 
     def add_dir_command(self, storage_id: str, path: str, content: str, mountpoint: str | None = None) -> list:
@@ -137,12 +167,12 @@ class Proxmox:
         """Register an existing directory as a Proxmox storage. Never creates or formats anything."""
         self.r.run(self.add_dir_command(storage_id, path, content, mountpoint))
 
-    def set(self, vmid: int, **opts) -> None:
+    def set(self, vmid: int, *, on_line=None, **opts) -> None:
         """qm set with key=value options; `delete` takes a list of keys to remove."""
         argv = ["qm", "set", str(vmid)]
         for k, v in opts.items():
             argv += [f"--{k}", str(v)]
-        self.r.run(argv)
+        self.r.run(argv, on_line=on_line)
 
     def resize(self, vmid: int, disk: str, size: str) -> None:
         self.r.run(["qm", "resize", str(vmid), disk, size])
@@ -160,17 +190,18 @@ class Proxmox:
     def destroy(self, vmid: int) -> None:
         self.r.run(["qm", "destroy", str(vmid), "--purge", "1", "--destroy-unreferenced-disks", "1"])
 
-    def vzdump(self, vmid: int, storage: str, *, mode: str = "stop", compress: str = "zstd") -> str:
+    def vzdump(self, vmid: int, storage: str, *, mode: str = "stop", compress: str = "zstd", on_line=None) -> str:
         """Back up one VM; returns the archive volume ID parsed from vzdump's output."""
-        res = self.r.run(["vzdump", str(vmid), "--storage", storage, "--mode", mode, "--compress", compress])
+        res = self.r.run(["vzdump", str(vmid), "--storage", storage, "--mode", mode, "--compress", compress],
+                         on_line=on_line)
         text = res.stdout + res.stderr
         m = re.search(r"creating vzdump archive '([^']+)'", text) or re.search(r"archive file: (\S+)", text)
         # vzdump reports a file path (or a volid, depending on storage); callers that need the
         # volume ID should diff `backups()` instead of trusting this.
         return m.group(1) if m else ""
 
-    def restore(self, volid: str, vmid: int, storage: str) -> None:
-        self.r.run(["qmrestore", volid, str(vmid), "--storage", storage])
+    def restore(self, volid: str, vmid: int, storage: str, on_line=None) -> None:
+        self.r.run(["qmrestore", volid, str(vmid), "--storage", storage], on_line=on_line)
 
     def free_volume(self, volid: str) -> None:
         """Delete one backup volume. Callers must only pass volumes lab created."""

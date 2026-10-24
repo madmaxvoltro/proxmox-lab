@@ -129,11 +129,16 @@ class HostIO:
         root = os.path.abspath(os.sep)
         return os.stat(path).st_dev == os.stat(root).st_dev
 
-    def sha256(self, path: str, algo: str = "sha256") -> str:
+    def sha256(self, path: str, algo: str = "sha256", on_progress=None) -> str:
         h = hashlib.new(algo)
+        total = os.path.getsize(path)
+        done = 0
         with open(path, "rb") as fh:
             for chunk in iter(lambda: fh.read(1 << 20), b""):
                 h.update(chunk)
+                done += len(chunk)
+                if on_progress:
+                    on_progress(done, total)
         return h.hexdigest()
 
     # writes --------------------------------------------------------------
@@ -146,14 +151,22 @@ class HostIO:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(text)
 
-    def fetch_file(self, url: str, dest: str, timeout: float = 60) -> None:
-        """Download to dest via a .part file so a failed download never looks complete."""
+    def fetch_file(self, url: str, dest: str, timeout: float = 60, on_progress=None) -> None:
+        """Download to dest via a .part file so a failed download never looks complete.
+        `on_progress(done_bytes, total_bytes_or_None)` is called as data arrives."""
         Path(dest).parent.mkdir(parents=True, exist_ok=True)
         part = dest + ".part"
         req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
         try:
             with urllib.request.urlopen(req, timeout=timeout) as r, open(part, "wb") as out:
-                shutil.copyfileobj(r, out, 1 << 20)
+                length = r.headers.get("Content-Length") if getattr(r, "headers", None) else None
+                total = int(length) if length and length.isdigit() else None
+                done = 0
+                while chunk := r.read(1 << 20):
+                    out.write(chunk)
+                    done += len(chunk)
+                    if on_progress:
+                        on_progress(done, total)
         except OSError as e:
             if os.path.exists(part):
                 os.unlink(part)
@@ -179,7 +192,7 @@ class DryRunHostIO(HostIO):
     def write_text(self, path, text, mode=0o644):
         self._skip("write", path)
 
-    def fetch_file(self, url, dest, timeout=60):
+    def fetch_file(self, url, dest, timeout=60, on_progress=None):
         self._skip("download", url, dest)
 
     def remove(self, path):

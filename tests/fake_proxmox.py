@@ -31,6 +31,8 @@ class FakeProxmox(Runner):
         self._seq = 0
         self.guest_agent_ready = True
         self.ignore_shutdown = False
+        self.line_script = []  # (predicate(argv), [output lines]) replayed to on_line callbacks
+        self.streamed = []  # per call: was a progress callback supplied?
         self.ips_in_use = set()  # addresses that answer a ping (something else already uses them)
         self.backup_size = 1 << 30
         self.hooks = []  # (predicate, fn) run before dispatch; fn may raise to simulate a crash/interrupt
@@ -58,9 +60,15 @@ class FakeProxmox(Runner):
         return [c for c in self.calls if tuple(c[: len(prefix)]) == prefix]
 
     # Runner ----------------------------------------------------------------
-    def run(self, argv, *, input=None, check=True, timeout=None):
+    def run(self, argv, *, input=None, check=True, timeout=None, on_line=None):
         argv = [str(a) for a in argv]
         self.calls.append(argv)
+        self.streamed.append(on_line is not None)
+        if on_line is not None:
+            for pred, lines in self.line_script:
+                if pred(argv):
+                    for ln in lines:
+                        on_line(ln)
         if input is not None:
             self.stdin_seen.append(input)
         for pred, fn in self.hooks:
@@ -240,7 +248,8 @@ class FakeProxmox(Runner):
             for pred, result in self.guest_results:
                 if pred(cmd):
                     return Result(a, result.get("exitcode", 0), json.dumps({"exited": 1, **result}), "")
-            return self._ok(a, json.dumps({"exited": 1, "exitcode": 0, "out-data": "", "err-data": ""}))
+            out = "status: done\n" if cmd.startswith("cloud-init status") else ""
+            return self._ok(a, json.dumps({"exited": 1, "exitcode": 0, "out-data": out, "err-data": ""}))
         return self._err(a, f"fake: unhandled qm {sub}")
 
     def _pvesm(self, a):

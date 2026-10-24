@@ -14,6 +14,7 @@ from . import __version__, access, distros, doctor as doctor_mod
 from . import config as config_mod
 from . import init as init_mod
 from . import mcp as mcp_mod
+from . import progress
 from .approvals import Approvals, state_of
 from .db import DB
 from .errors import LabError, PreconditionError, UsageError
@@ -132,6 +133,7 @@ class Ctx:
         self.io = DryRunHostIO() if args.dry_run else HostIO()
         self.px = Proxmox(self.runner)
         self._db = None
+        self.rep = progress.make()  # stderr: a live window on a terminal, plain lines otherwise
 
     def db(self, create: bool = False):
         path = self.cfg.paths.db
@@ -139,8 +141,8 @@ class Ctx:
             self._db = DB(path)
         return self._db
 
-    def templates(self, progress=print) -> TemplateBuilder:
-        return TemplateBuilder(self.cfg, self.px, self.io, self.db(), progress=progress)
+    def templates(self, say=None) -> TemplateBuilder:
+        return TemplateBuilder(self.cfg, self.px, self.io, self.db(), progress=say or self.rep)
 
     def caller(self):
         db = self.db()
@@ -148,7 +150,8 @@ class Ctx:
             raise PreconditionError("lab is not initialised; run `lab init`")
         return access.resolve_caller(db, dict(os.environ), self.runner, as_name=self.args.as_name)
 
-    def lab(self, say=print) -> Lab:
+    def lab(self, say=None) -> Lab:
+        say = say or self.rep
         caller = self.caller()
         return Lab(self.cfg, self.px, self.io, self.db(), self.templates(say), Tailscale(self.cfg, self.px, self.io),
                    caller, say=say)
@@ -354,38 +357,50 @@ def cmd_user(ctx):
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO, format="%(message)s")
+    ctx, ok = None, False
     try:
         ctx = Ctx(args)
-        if args.cmd == "version":
-            _emit(args, {"version": __version__}, f"lab {__version__}")
-        elif args.cmd == "config":
-            _emit(args, ctx.cfg.to_dict(), json.dumps(ctx.cfg.to_dict(), indent=2, default=list))
-        elif args.cmd == "discover":
-            cmd_discover(ctx)
-        elif args.cmd == "distros":
-            cat = distros.load()
-            _emit(args, sorted(cat), "\n".join(f"  {d.id:<16} {d.family}  user={d.default_user}" for d in cat.values()))
-        elif args.cmd == "init":
-            cmd_init(ctx)
-        elif args.cmd == "doctor":
-            return cmd_doctor(ctx)
-        elif args.cmd == "template":
-            return cmd_template(ctx)
-        elif args.cmd == "user":
-            return cmd_user(ctx)
-        elif args.cmd in ("exec", "put", "get"):
-            return cmd_guest(ctx)
-        elif args.cmd in ("approve", "approvals"):
-            return cmd_approvals(ctx)
-        elif args.cmd == "mcp":
-            return cmd_mcp(ctx)
-        elif args.cmd in ("create", "list", "status", "start", "stop", "restart", "delete", "protect", "unprotect",
-                          "archive", "restore", "recover"):
-            return cmd_project(ctx)
-        return 0
+        rc = _run(ctx, args)
+        ok = rc == 0
+        return rc
     except LabError as e:
+        if ctx:
+            ctx.rep.finish(False)  # close the live progress display before the error text
         print(f"error: {e}", file=sys.stderr)
         return e.exit_code
+    finally:
+        if ctx:
+            ctx.rep.finish(ok)
+
+
+def _run(ctx, args) -> int:
+    if args.cmd == "version":
+        _emit(args, {"version": __version__}, f"lab {__version__}")
+    elif args.cmd == "config":
+        _emit(args, ctx.cfg.to_dict(), json.dumps(ctx.cfg.to_dict(), indent=2, default=list))
+    elif args.cmd == "discover":
+        cmd_discover(ctx)
+    elif args.cmd == "distros":
+        cat = distros.load()
+        _emit(args, sorted(cat), "\n".join(f"  {d.id:<16} {d.family}  user={d.default_user}" for d in cat.values()))
+    elif args.cmd == "init":
+        cmd_init(ctx)
+    elif args.cmd == "doctor":
+        return cmd_doctor(ctx)
+    elif args.cmd == "template":
+        return cmd_template(ctx)
+    elif args.cmd == "user":
+        return cmd_user(ctx)
+    elif args.cmd in ("exec", "put", "get"):
+        return cmd_guest(ctx)
+    elif args.cmd in ("approve", "approvals"):
+        return cmd_approvals(ctx)
+    elif args.cmd == "mcp":
+        return cmd_mcp(ctx)
+    elif args.cmd in ("create", "list", "status", "start", "stop", "restart", "delete", "protect", "unprotect",
+                      "archive", "restore", "recover"):
+        return cmd_project(ctx)
+    return 0
 
 
 if __name__ == "__main__":

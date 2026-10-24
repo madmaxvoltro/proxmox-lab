@@ -43,11 +43,13 @@ class FakeIO(HostIO):
     def url_exists(self, url, timeout=15):
         return url in self.urls
 
-    def fetch_file(self, url, dest, timeout=60):
+    def fetch_file(self, url, dest, timeout=60, on_progress=None):
         if url not in self.urls:
             raise FetchError(f"download failed for {url}")
         v = self.urls[url]
         self.files[dest] = v if isinstance(v, bytes) else v.encode()
+        if on_progress:
+            on_progress(len(self.files[dest]), len(self.files[dest]))
 
     def exists(self, path):
         return path in self.files or path in self.dirs
@@ -64,7 +66,9 @@ class FakeIO(HostIO):
     def same_device_as_root(self, path):
         return path in self.root_device_paths
 
-    def sha256(self, path, algo="sha256"):
+    def sha256(self, path, algo="sha256", on_progress=None):
+        if on_progress:
+            on_progress(1, 1)
         return hashlib.new(algo, self.files.get(path, path.encode())).hexdigest()
 
     def makedirs(self, path, mode=0o750):

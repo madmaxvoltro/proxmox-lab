@@ -7,7 +7,7 @@ import logging
 import time
 from pathlib import Path
 
-from . import access, netutil, quotas
+from . import access, netutil, progress, quotas
 from .access import Caller
 from .archive import ArchiveOps
 from .cloudinit import user_data  # noqa: F401  (re-exported)
@@ -17,7 +17,7 @@ from .errors import AccessError, LabError, PreconditionError, UsageError
 from .guest import GuestOps
 from .hostio import HostIO
 from .locking import lock
-from .proxmox import Proxmox
+from .proxmox import Proxmox, ProxmoxError
 from .tailscale import Tailscale
 from .template import TemplateBuilder
 from .units import hostname, to_gib, to_mib, validate_name
@@ -110,7 +110,7 @@ class Lab(ArchiveOps, GuestOps):
             quotas.check(cfg, self.db, owner, cpu=c, ram_mb=r, disk_gb=d, is_admin=self.caller.is_admin)
             tpl = self.templates.find(distro)
             if tpl is None:
-                self.say(f"no template for {distro}; building it first (a few minutes)")
+                progress.detail(self.say, f"no template for {distro} yet; building it first (several minutes)")
                 self.templates.build(distro)
                 tpl = self.templates.find(distro)
             vmid = self.px.nextid(*cfg.vm.vmid_range, taken=self.db.used_vmids())
@@ -137,25 +137,37 @@ class Lab(ArchiveOps, GuestOps):
     def _build_vm(self, name, owner, vmid, tpl_id, mode, cpu, ram_mb, disk_gb, snippet, jid, tailscale, ip=None):
         cfg, px = self.cfg, self.px
         host = hostname(name)
+        progress.plan(self.say, 5 if tailscale else 4)
         self.db.journal_step(jid, "clone")
-        self.say(f"cloning template {tpl_id} -> VMID {vmid} ({mode})")
-        px.clone(tpl_id, vmid, host, full=(mode == "full"), storage=cfg.storage.fast_disk)
+        self.say(f"Cloning the template into VMID {vmid} ({mode} clone)")
+        px.clone(tpl_id, vmid, host, full=(mode == "full"), storage=cfg.storage.fast_disk,
+                 on_line=progress.line_cb(self.say))
+        self.say("Configuring the VM")
         self.io.write_text(snippet, user_data(name, owner))
         px.set(vmid, cores=cpu, memory=ram_mb, tags=f"lab;owner-{owner}", **netutil.ipconfig(cfg.network, ip),
                cicustom=f"user={self._snippet_volid(name)}",
                description=f"lab-project name={name} owner={owner} created={int(time.time())}")
+        progress.detail(self.say, f"{cpu} vCPU, {ram_mb} MiB RAM, {disk_gb} GiB disk" + (f", address {ip}" if ip else ""))
         if disk_gb > to_gib(cfg.vm.default_disk):
             px.resize(vmid, "scsi0", f"{disk_gb}G")
         self.db.journal_step(jid, "boot")
+        self.say("Booting")
         px.start(vmid)
-        px.wait_agent(vmid, self.agent_timeout, sleep=self.sleep, monotonic=self.monotonic)
-        res = px.guest_exec(vmid, ["cloud-init", "status", "--wait"], check=False, timeout=300)
-        if res.get("exitcode", 1) != 0:
-            raise LabError("first-boot configuration failed: " + (res.get("err-data") or res.get("out-data") or "").strip()[-300:])
+        px.wait_agent(vmid, self.agent_timeout, sleep=self.sleep, monotonic=self.monotonic,
+                      on_wait=progress.wait_cb(self.say))
+        self.say("First-boot setup")
+        try:
+            px.wait_cloud_init(vmid, 300, 5, sleep=self.sleep, monotonic=self.monotonic,
+                               on_wait=progress.wait_cb(self.say),
+                               on_detail=lambda text, key: progress.detail(self.say, text, key))
+        except ProxmoxError as e:
+            raise LabError(f"first-boot configuration failed: {e}") from e
         fields = {"state": "running"}
         if tailscale:
             self.db.journal_step(jid, "tailscale")
+            self.say("Joining the tailnet")
             en = self.ts.enroll(vmid, host, owner)
+            progress.detail(self.say, f"{en.dns_name} ({en.ip})")
             fields.update(tailnet_ip=en.ip, tailnet_name=en.dns_name)
         self.db.update_project(name, **fields)
 
@@ -212,10 +224,14 @@ class Lab(ArchiveOps, GuestOps):
             if not running:
                 quotas.check(self.cfg, self.db, row["owner"], cpu=row["cpu"], ram_mb=row["ram_mb"],
                              disk_gb=row["disk_gb"], exclude=name, is_admin=self.caller.is_admin)
+                self.say(f"Starting {name}")
                 self.px.start(row["vmid"])
-            self.px.wait_agent(row["vmid"], self.agent_timeout, sleep=self.sleep, monotonic=self.monotonic)
+            self.say("Waiting for the guest agent")
+            self.px.wait_agent(row["vmid"], self.agent_timeout, sleep=self.sleep, monotonic=self.monotonic,
+                               on_wait=progress.wait_cb(self.say))
             self.db.update_project(name, state="running")
             if self._tailnet_managed(row) and (not running or not row["tailnet_ip"]):
+                self.say("Joining the tailnet")
                 en = self.ts.enroll(row["vmid"], hostname(name), row["owner"])
                 self.db.update_project(name, tailnet_ip=en.ip, tailnet_name=en.dns_name)
         return self.status(name)
@@ -225,6 +241,7 @@ class Lab(ArchiveOps, GuestOps):
         with self._project_lock(name):
             vm = self._live_vm(row)
             if vm is not None and vm["status"] == "running":
+                self.say(f"Stopping {name} (leaving the tailnet, graceful shutdown)")
                 self._shutdown(row, force)
             self.db.update_project(name, state="stopped", tailnet_ip=None)
         return self.status(name)
