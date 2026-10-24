@@ -86,6 +86,11 @@ _MIGRATIONS = [
     );
     CREATE INDEX approvals_fp ON approvals(user, fingerprint);
     """,
+    # v3: static addresses (NULL when the network uses DHCP; unique index ignores NULLs)
+    """
+    ALTER TABLE projects ADD COLUMN static_ip TEXT;
+    CREATE UNIQUE INDEX projects_static_ip ON projects(static_ip);
+    """,
 ]
 
 
@@ -196,6 +201,9 @@ class DB:
 
     def used_vmids(self) -> set:
         return {r[0] for r in self.conn.execute("SELECT vmid FROM projects WHERE vmid IS NOT NULL")}
+
+    def used_ips(self) -> set:
+        return {r[0] for r in self.conn.execute("SELECT static_ip FROM projects WHERE static_ip IS NOT NULL")}
 
     # archives --------------------------------------------------------------
     def add_archive(self, project: str, owner: str, volid: str, size_bytes: int | None = None,

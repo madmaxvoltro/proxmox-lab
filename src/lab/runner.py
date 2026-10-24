@@ -29,6 +29,7 @@ _READ_ONLY = {
     ("pvesm", "status"), ("pvesm", "list"), ("pvesm", "path"),
     ("tailscale", "whois"), ("tailscale", "status"),
     ("zstd", "-t"),
+    ("ip", "-4"), ("ping", "-c"),
     ("pvesh", "get"),
     ("pveversion", None),
 }

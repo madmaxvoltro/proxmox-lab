@@ -8,6 +8,9 @@ import json
 import logging
 import os
 import shutil
+import socket
+import struct
+import time
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -20,6 +23,22 @@ USER_AGENT = "project-lab/0"
 
 class FetchError(LabError):
     pass
+
+
+_DHCP_MAGIC = b"\x63\x82\x53\x63"
+
+
+def build_discover(xid: bytes, mac: bytes) -> bytes:
+    """A DHCPDISCOVER (RFC 2131), broadcast flag set so any server answers to 255.255.255.255."""
+    head = struct.pack("!BBBBIHH4s4s4s4s16s64s128s", 1, 1, 6, 0, int.from_bytes(xid, "big"), 0, 0x8000,
+                       b"\0" * 4, b"\0" * 4, b"\0" * 4, b"\0" * 4, mac.ljust(16, b"\0"), b"\0" * 64, b"\0" * 128)
+    return head + _DHCP_MAGIC + b"\x35\x01\x01" + b"\xff"
+
+
+def is_offer(packet: bytes, xid: bytes) -> bool:
+    """A DHCP reply (BOOTREPLY) to our transaction carrying a DHCP message type option."""
+    return (len(packet) > 240 and packet[0] == 2 and packet[4:8] == xid and packet[236:240] == _DHCP_MAGIC
+            and b"\x35\x01\x02" in packet[240:])
 
 
 class HostIO:
@@ -56,6 +75,35 @@ class HostIO:
             raise FetchError(f"POST {url} failed: {e}") from e
         except json.JSONDecodeError as e:
             raise FetchError(f"POST {url} returned invalid JSON") from e
+
+    def probe_dhcp(self, interface: str, timeout: float = 4.0) -> bool | None:
+        """Does a DHCP server answer on this bridge? True/False, or None if it cannot be probed
+        (not Linux, not root, or something already holds the DHCP client port). The probe only
+        asks for an offer; it never takes a lease."""
+        try:
+            xid, mac = os.urandom(4), b"\x02" + os.urandom(5)  # locally administered, unicast
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, interface.encode())
+                s.bind(("0.0.0.0", 68))
+                s.settimeout(1.0)
+                deadline = time.monotonic() + timeout
+                s.sendto(build_discover(xid, mac), ("255.255.255.255", 67))
+                resent = False
+                while time.monotonic() < deadline:
+                    try:
+                        data, _ = s.recvfrom(2048)
+                    except socket.timeout:
+                        if not resent:
+                            s.sendto(build_discover(xid, mac), ("255.255.255.255", 67))
+                            resent = True
+                        continue
+                    if is_offer(data, xid):
+                        return True
+                return False
+        except (OSError, AttributeError):
+            return None
 
     def read_text(self, path: str) -> str:
         with open(path, encoding="utf-8") as fh:

@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 
+from . import netutil
 from .config import Config
 from .errors import LabError
 from .hostio import HostIO
@@ -100,6 +101,22 @@ def run_checks(cfg: Config, px: Proxmox, io: HostIO, db=None, templates=None) ->
         add("bridge", OK if cfg.network.bridge in bridges else FAIL,
             cfg.network.bridge if cfg.network.bridge in bridges else
             f"{cfg.network.bridge!r} not found (have: {', '.join(bridges) or 'none'})")
+
+    if cfg.network.bridge:
+        if cfg.network.mode == "dhcp":
+            found = io.probe_dhcp(cfg.network.bridge)
+            if found is False:
+                add("addressing", WARN, f"no DHCP server answered on {cfg.network.bridge}",
+                    "if VMs on this bridge need fixed addresses, run `lab init` and choose static")
+            else:
+                add("addressing", OK, "dhcp" + ("" if found else " (could not probe)"))
+        else:
+            used = db.used_ips() if db is not None else set()
+            n, size = netutil.usage(cfg.network, used)
+            level = FAIL if size and n >= size else WARN if size and n >= 0.9 * size else OK
+            add("addressing", level, f"static, {n}/{size} pool addresses assigned "
+                f"({cfg.network.pool_start}-{cfg.network.pool_end})",
+                "widen the pool in the host config" if level != OK else "")
 
     # templates ---------------------------------------------------------------------
     if templates is not None:

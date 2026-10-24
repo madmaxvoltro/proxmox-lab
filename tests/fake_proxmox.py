@@ -31,6 +31,7 @@ class FakeProxmox(Runner):
         self._seq = 0
         self.guest_agent_ready = True
         self.ignore_shutdown = False
+        self.ips_in_use = set()  # addresses that answer a ping (something else already uses them)
         self.backup_size = 1 << 30
         self.hooks = []  # (predicate, fn) run before dispatch; fn may raise to simulate a crash/interrupt
         self.path_root = "/var/lib/vz"  # where `pvesm path` says dir storages live
@@ -99,6 +100,8 @@ class FakeProxmox(Runner):
             return self._vzdump(a)
         if cmd == "qmrestore":
             return self._qmrestore(a)
+        if cmd == "ping":  # ping -c 1 -W 1 IP
+            return self._ok(a) if a[-1] in self.ips_in_use else self._err(a, "100% packet loss", 1)
         if cmd == "zstd":
             rest = a[2][len(self.path_root) + 1:]
             for volid, b in self.backups.items():
@@ -193,7 +196,8 @@ class FakeProxmox(Runner):
             for k, v in zip(opts[::2], opts[1::2]):
                 k = k.lstrip("-")
                 if k == "delete":
-                    vm["config"].pop(v, None)
+                    for key in v.split(","):
+                        vm["config"].pop(key, None)
                 elif k == "name":
                     vm["name"] = v
                 elif k == "tags":

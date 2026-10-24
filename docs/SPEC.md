@@ -56,6 +56,13 @@ archive_disk = "<chosen at init>"
 snippet_disk = "<storage with 'snippets' content, for cloud-init user-data>"
 [network]
 bridge       = "<discovered>"
+mode         = "dhcp"        # dhcp | static. `lab init` probes the bridge for a DHCP server and picks the default
+# static mode only (the network has no DHCP; lab hands out addresses itself):
+subnet       = "192.168.10.0/24"
+gateway      = "192.168.10.1"
+dns          = "192.168.10.1 1.1.1.1"
+pool_start   = "192.168.10.200"    # lab only ever uses addresses in [pool_start, pool_end]
+pool_end     = "192.168.10.220"
 [vm]
 vmid_range   = [1000, 1999]
 template_range = [9000, 9099]   # one golden template per distro; must not overlap vmid_range
@@ -173,6 +180,10 @@ Exit codes are stable (0 ok, 2 usage, 3 precondition failed, 4 verification fail
 - **restore**: needs a verified archive present on the archive disk, passes the quota check, restores to the fast disk under a new VMID, regenerates the per-VM cloud-init snippet, drops the old Tailscale identity inside the guest and enrols fresh. A failed restore is rolled back and the archive stays. The archive is kept after restore.
 - **keep-active**: `--keep-active` verifies and records an archive but keeps the VM.
 - **delete** refuses a project that has archives unless `--archives` is passed; works on archived projects.
+
+### 7.3 Addressing (added after the first host trial)
+
+The first host's bridge had no DHCP server, so the template build VM never got a network. Addressing is now explicit. `lab init` sends a DHCPDISCOVER on the chosen bridge (asks for an offer, never takes a lease; run as root) and defaults to `dhcp` if a server answers, `static` if none does, or the current setting if it cannot probe. In `static` mode it suggests subnet and gateway from the host's own address and default route on that bridge, then asks for DNS and the pool. `lab` assigns each project the first pool address that is not recorded for another project and does not answer a ping, stores it (`projects.static_ip`, unique), and sets `ipconfig0=ip=ADDR/PREFIX,gw=GW` plus `nameserver`. The address stays reserved while the project is archived, is reused on restore, and is freed by delete or a rolled-back create. The template build VM takes a temporary pool address and the finished template keeps no address or user-data. `doctor` warns when a bridge in `dhcp` mode gets no answer and shows static pool usage (warn at 90%, fail when full). All of this is host config only (§4.1).
 
 ## 8. Auto-setup on create
 

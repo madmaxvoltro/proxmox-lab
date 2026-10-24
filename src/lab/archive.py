@@ -13,7 +13,7 @@ recovery rolls forward."""
 import json
 import logging
 
-from . import quotas
+from . import netutil, quotas
 from .cloudinit import user_data
 from .errors import CommandError, LabError, PreconditionError, VerificationError
 from .units import hostname
@@ -283,15 +283,21 @@ class ArchiveOps:
         host, fast, owner = hostname(name), self.cfg.storage.fast_disk, row["owner"]
         with self._global_lock():
             vmid = self.px.nextid(*self.cfg.vm.vmid_range, taken=self.db.used_vmids())
+            net = self.cfg.network
+            ip = row["static_ip"]
+            if net.mode == "static" and not (ip and self._in_pool(ip)):
+                ip = netutil.allocate(net, self.db.used_ips(), self.px.r)  # first restore under a new addressing mode
+            elif net.mode != "static":
+                ip = None
             jid = self.db.journal_begin(name, "restore", self.caller.name)
-            self.db.update_project(name, state="restoring", vmid=vmid)
+            self.db.update_project(name, state="restoring", vmid=vmid, static_ip=ip)
             self._persist(jid, "restore", {"vmid": vmid})
             snippet = self.px.storage_path(self._snippet_volid(name))
             try:
                 self.say(f"restoring {name} to VMID {vmid} on {fast}")
                 self.px.restore(arc["volid"], vmid, fast)
                 self.px.set(vmid, name=host, tags=f"lab;owner-{owner}", cores=row["cpu"], memory=row["ram_mb"],
-                            cicustom=f"user={self._snippet_volid(name)}")
+                            cicustom=f"user={self._snippet_volid(name)}", **netutil.ipconfig(net, ip))
                 self.io.write_text(snippet, user_data(name, owner))
                 self.db.update_project(name, state="stopped", storage_id=fast, tailnet_ip=None)
             except BaseException as e:
@@ -314,6 +320,9 @@ class ArchiveOps:
                 raise LabError(f"{name} was restored but could not be started: {e}. "
                                f"Run `lab start {name}` once the problem is fixed.") from e
         return self.status(name)
+
+    def _in_pool(self, ip: str) -> bool:
+        return ip in netutil.pool(self.cfg.network)
 
     def _rollback_restore(self, name, host, vmid, snippet, jid, error) -> None:
         log.warning("restore of %s failed (%s); rolling back", name, error)

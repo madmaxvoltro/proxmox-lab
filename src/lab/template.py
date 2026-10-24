@@ -9,7 +9,7 @@ import logging
 import time
 from datetime import datetime, timezone
 
-from . import distros
+from . import distros, netutil
 from .config import Config
 from .errors import LabError, PreconditionError, VerificationError
 from .hostio import HostIO
@@ -159,7 +159,10 @@ class TemplateBuilder:
             )
             created = True
             self.px.set(vmid, scsi0=f"{fast}:0,import-from={image},discard=on,ssd=1")
-            self.px.set(vmid, ide2=f"{fast}:cloudinit", boot="order=scsi0", ipconfig0="ip=dhcp",
+            build_ip = netutil.allocate(cfg.network, self.db.used_ips() if self.db else set(), self.px.r)
+            if build_ip:
+                self.say(f"build VM address: {build_ip}")
+            self.px.set(vmid, ide2=f"{fast}:cloudinit", boot="order=scsi0", **netutil.ipconfig(cfg.network, build_ip),
                         ciuser=d.default_user, cicustom=f"user={snippet_volid}")
             self.px.resize(vmid, "scsi0", f"{to_gib(cfg.vm.default_disk)}G")
             self.px.start(vmid)
@@ -170,7 +173,9 @@ class TemplateBuilder:
             self.px.shutdown(vmid)
             if not self.dry_run and self.px.status(vmid) != "stopped":
                 raise TemplateError(f"VM {vmid} did not shut down; leaving it for inspection")
-            self.px.set(vmid, delete="cicustom", name=d.template_name, description=describe(d, image_hash))
+            # the build VM's address and user-data must not leak into clones (create sets its own)
+            self.px.set(vmid, delete="cicustom,ipconfig0,nameserver", name=d.template_name,
+                        description=describe(d, image_hash))
             self.px.to_template(vmid)
         except BaseException:
             if created:

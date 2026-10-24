@@ -8,7 +8,7 @@ import os
 from dataclasses import dataclass, field
 
 from . import config as config_mod
-from . import tsacl
+from . import netutil, tsacl
 from .errors import PreconditionError, UsageError
 from .hostio import HostIO
 from .identity import caller_login
@@ -109,6 +109,27 @@ def run_init(px: Proxmox, io: HostIO, runner: Runner, ui: Prompter, *, existing:
         raise PreconditionError("no network bridge found on the node")
     cfg.network.bridge = ui.choose("Network bridge for project VMs", [(b, "") for b in bridges],
                                    default=cfg.network.bridge or (bridges[0] if len(bridges) == 1 else None))
+
+    # addressing -------------------------------------------------------------------------------
+    net = cfg.network
+    found = io.probe_dhcp(net.bridge)
+    ui.info({True: f"A DHCP server answered on {net.bridge}.",
+             False: f"No DHCP server answered on {net.bridge}: VMs there need fixed addresses.",
+             None: f"Could not probe {net.bridge} for DHCP."}[found])
+    net.mode = ui.choose(f"Address assignment on {net.bridge}",
+                         [("dhcp", "the network hands out addresses"),
+                          ("static", "lab assigns each VM an address from a pool you define")],
+                         default={True: "dhcp", False: "static"}.get(found, net.mode))
+    if net.mode == "static":
+        guess = netutil.host_defaults(runner, net.bridge)
+        net.subnet = ui.ask("Subnet (CIDR, e.g. 192.168.10.0/24)", net.subnet or guess.get("subnet"))
+        net.gateway = ui.ask("Gateway address", net.gateway or guess.get("gateway"))
+        net.dns = ui.ask("DNS servers (space separated)", net.dns or net.gateway)
+        net.pool_start = ui.ask("First address lab may assign", net.pool_start or None)
+        net.pool_end = ui.ask("Last address lab may assign", net.pool_end or None)
+        ui.info("Keep that range free of anything else (reserve it in your router). lab also pings an "
+                "address before using it.")
+    net.validate()
 
     # vmid range -------------------------------------------------------------------------------
     lo, hi = cfg.vm.vmid_range

@@ -1,6 +1,7 @@
 """Host configuration (SPEC section 4). Storage IDs, bridge and addresses are never defaulted."""
 
 import dataclasses
+import ipaddress
 import json
 import os
 import tomllib
@@ -23,7 +24,40 @@ class Storage:
 
 @dataclass
 class Network:
+    """How project VMs get an address on `bridge`. `dhcp`: the network hands them out.
+    `static`: lab assigns each VM one address from [pool_start, pool_end] (checked free with a ping)."""
     bridge: str = ""
+    mode: str = "dhcp"      # dhcp | static
+    subnet: str = ""        # static: CIDR, e.g. 192.168.10.0/24
+    gateway: str = ""       # static
+    dns: str = ""           # static: space-separated resolvers
+    pool_start: str = ""    # static
+    pool_end: str = ""      # static
+
+    def validate(self) -> None:
+        if self.mode not in ("dhcp", "static"):
+            raise UsageError("network.mode must be 'dhcp' or 'static'")
+        if self.mode == "dhcp":
+            return
+        try:
+            net = ipaddress.ip_network(self.subnet, strict=False)
+            gw = ipaddress.ip_address(self.gateway)
+            lo, hi = ipaddress.ip_address(self.pool_start), ipaddress.ip_address(self.pool_end)
+            dns = [ipaddress.ip_address(d) for d in self.dns.split()]
+        except ValueError as e:
+            raise UsageError(f"network (static): {e}") from e
+        if net.version != 4:
+            raise UsageError("network (static): only IPv4 is supported")
+        if not dns:
+            raise UsageError("network (static): dns needs at least one resolver")
+        if gw not in net or lo not in net or hi not in net:
+            raise UsageError("network (static): gateway and pool must be inside the subnet")
+        if lo > hi:
+            raise UsageError("network (static): pool_start must not be after pool_end")
+        if lo <= gw <= hi:
+            raise UsageError("network (static): the gateway must not be inside the pool")
+        if net.network_address in (lo, hi) or net.broadcast_address in (lo, hi):
+            raise UsageError("network (static): the pool must not include the network or broadcast address")
 
 
 @dataclass
@@ -126,6 +160,7 @@ class Config:
             raise UsageError(f"vm.template_range {self.vm.template_range} must satisfy 100 <= low <= high")
         if lo <= thi and tlo <= hi:
             raise UsageError("vm.template_range must not overlap vm.vmid_range")
+        self.network.validate()
         parse_size(self.vm.default_disk)
         for name, p in self.presets.items():
             missing = {"cpu", "ram", "disk"} - set(p)

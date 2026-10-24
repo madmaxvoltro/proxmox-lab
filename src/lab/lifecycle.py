@@ -7,7 +7,7 @@ import logging
 import time
 from pathlib import Path
 
-from . import access, quotas
+from . import access, netutil, quotas
 from .access import Caller
 from .archive import ArchiveOps
 from .cloudinit import user_data  # noqa: F401  (re-exported)
@@ -114,13 +114,14 @@ class Lab(ArchiveOps, GuestOps):
                 self.templates.build(distro)
                 tpl = self.templates.find(distro)
             vmid = self.px.nextid(*cfg.vm.vmid_range, taken=self.db.used_vmids())
+            ip = netutil.allocate(cfg.network, self.db.used_ips(), self.px.r)
             jid = self.db.journal_begin(name, "create", self.caller.name)
             self.db.add_project(name=name, vmid=vmid, owner=owner, distro=distro, template_id=int(tpl["vmid"]),
                                 storage_id=cfg.storage.fast_disk, clone_mode=mode, cpu=c, ram_mb=r, disk_gb=d,
-                                state="creating", tailnet_name=host if tailscale else None)
+                                state="creating", tailnet_name=host if tailscale else None, static_ip=ip)
             snippet = self.px.storage_path(self._snippet_volid(name))
             try:
-                self._build_vm(name, owner, vmid, int(tpl["vmid"]), mode, c, r, d, snippet, jid, tailscale)
+                self._build_vm(name, owner, vmid, int(tpl["vmid"]), mode, c, r, d, snippet, jid, tailscale, ip)
             except BaseException as e:
                 self._rollback_create(name, host, vmid, snippet, jid, e)
                 raise
@@ -133,14 +134,14 @@ class Lab(ArchiveOps, GuestOps):
         if self.db.get_project(name) is not None or any(v.get("name") == host for v in self.px.vms()):
             raise PreconditionError(f"project name unavailable: {name}")
 
-    def _build_vm(self, name, owner, vmid, tpl_id, mode, cpu, ram_mb, disk_gb, snippet, jid, tailscale):
+    def _build_vm(self, name, owner, vmid, tpl_id, mode, cpu, ram_mb, disk_gb, snippet, jid, tailscale, ip=None):
         cfg, px = self.cfg, self.px
         host = hostname(name)
         self.db.journal_step(jid, "clone")
         self.say(f"cloning template {tpl_id} -> VMID {vmid} ({mode})")
         px.clone(tpl_id, vmid, host, full=(mode == "full"), storage=cfg.storage.fast_disk)
         self.io.write_text(snippet, user_data(name, owner))
-        px.set(vmid, cores=cpu, memory=ram_mb, tags=f"lab;owner-{owner}", ipconfig0="ip=dhcp",
+        px.set(vmid, cores=cpu, memory=ram_mb, tags=f"lab;owner-{owner}", **netutil.ipconfig(cfg.network, ip),
                cicustom=f"user={self._snippet_volid(name)}",
                description=f"lab-project name={name} owner={owner} created={int(time.time())}")
         if disk_gb > to_gib(cfg.vm.default_disk):

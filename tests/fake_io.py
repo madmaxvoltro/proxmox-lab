@@ -14,6 +14,7 @@ class FakeIO(HostIO):
         self.root_device_paths = set()  # paths that are on the root filesystem
         self.made = []
         self.removed = []
+        self.dhcp = True  # what probe_dhcp reports: True / False / None (cannot probe)
         self.posts = []
         self.post_replies = {
             "https://api.tailscale.com/api/v2/oauth/token": {"access_token": "at-1"},
@@ -26,6 +27,9 @@ class FakeIO(HostIO):
         if isinstance(reply, Exception):
             raise reply
         return reply
+
+    def probe_dhcp(self, interface, timeout=4.0):
+        return self.dhcp
 
     def read_text(self, path):
         return self.files[path].decode()
