@@ -213,6 +213,131 @@ class WatchLoopTest(unittest.TestCase):
             self.run_once([ClientError("no route")], [])
 
 
+class DescribeTest(unittest.TestCase):
+    def test_headlines_and_danger_for_each_kind_of_request(self):
+        cases = {
+            "enter": ("Let Claude work in “demo2”?", False),
+            "delete": ("Delete “demo”?", True),
+            "root": ("Run a command as root in “demo”?", True),
+            "archive": ("Archive “demo”?", False),
+            "protected": ("Allow access to the protected project “vault”?", True),
+        }
+        for kind, (title, danger) in cases.items():
+            d = watch.describe(watch.SAMPLES[kind])
+            self.assertEqual((d["title"], d["danger"]), (title, danger), kind)
+        self.assertEqual(watch.describe({"tool": "lab_restore", "project": "x", "plan": "p"})["title"],
+                         "Restore “x”?")
+        self.assertEqual(watch.describe({"tool": "something_new", "plan": "do it"})["title"], "Allow this action?")
+
+    def test_root_command_is_the_subtitle_and_details_are_complete(self):
+        d = watch.describe(watch.SAMPLES["root"])
+        self.assertEqual(d["subtitle"], "apt-get install -y build-essential && systemctl restart nginx")
+        rows = {r["label"]: r["value"] for r in d["details"]}
+        self.assertEqual(rows["Approval ID"], "c41d9e")
+        self.assertEqual(rows["Requested for"], "alex")
+        self.assertEqual(rows["Expires"], "in 5 min")
+        self.assertIn("ROOT", d["plan"])  # the full request is kept verbatim for the More info panel
+
+    def test_missing_fields_do_not_break_it(self):
+        d = watch.describe({})
+        self.assertEqual(d["title"], "Allow this action?")
+        self.assertEqual(len(d["details"]), 5)
+
+
+class FakeProc:
+    def __init__(self, code, polls=1, out="", err=""):
+        self.returncode, self.out, self.err, self.n, self.terminated = None, out, err, polls, False
+        self.final = code
+
+    def poll(self):
+        self.n -= 1
+        if self.n < 0 and not self.terminated:
+            self.returncode = self.final
+        return self.returncode
+
+    def terminate(self):
+        self.terminated = True
+        self.returncode = 1
+
+    def wait(self):
+        pass
+
+    def communicate(self):
+        return self.out, self.err
+
+
+@unittest.skipUnless(__import__("os").name == "nt" and __import__("shutil").which("powershell"), "needs Windows PowerShell")
+class PopupLauncherTest(unittest.TestCase):
+    def launch(self, proc, alive=lambda: True, **kw):
+        seen = {}
+
+        def popen(cmd, **k):
+            import json as _json
+            seen["cmd"] = cmd
+            seen["payload"] = _json.loads(Path(cmd[cmd.index("-Payload") + 1]).read_text(encoding="utf-8"))
+            seen["path"] = cmd[cmd.index("-Payload") + 1]
+            return proc
+        t = [0.0]
+
+        def sleeper(s):
+            t[0] += s
+        result = watch.show_popup(watch.SAMPLES["delete"], alive, popen=popen, sleep=sleeper, monotonic=lambda: t[0], **kw)
+        return result, seen
+
+    def test_exit_codes_map_to_answers_and_the_payload_file_is_removed(self):
+        for code, want in ((watch.APPROVED, True), (watch.DENIED, False), (watch.TIMED_OUT, None)):
+            result, seen = self.launch(FakeProc(code))
+            self.assertIs(result, want)
+            self.assertFalse(Path(seen["path"]).exists())
+        self.assertEqual(seen["payload"]["title"], "Delete “demo”?")
+        self.assertTrue(seen["payload"]["danger"])
+        self.assertIn("-ExecutionPolicy", seen["cmd"])
+        self.assertIn("Bypass", seen["cmd"])
+
+    def test_popup_is_taken_down_when_settled_elsewhere(self):
+        proc = FakeProc(watch.APPROVED, polls=1000)
+        result, _ = self.launch(proc, alive=lambda: False, poll=3.0)
+        self.assertIsNone(result)
+        self.assertTrue(proc.terminated)
+
+    def test_errors_surface_so_the_caller_can_fall_back(self):
+        with self.assertRaisesRegex(watch.PopupError, "boom"):
+            self.launch(FakeProc(20, err="boom at line 5"))
+
+    def test_test_hooks_reach_the_script(self):
+        _, seen = self.launch(FakeProc(watch.TIMED_OUT), autoclose=6, selftest="enter", expanded=True)
+        self.assertEqual((seen["payload"]["autoclose"], seen["payload"]["selftest"], seen["payload"]["expanded"]),
+                         (6, "enter", True))
+
+    def test_the_script_is_shipped_and_wired_to_the_right_keys_and_exit_codes(self):
+        text = watch.SCRIPT.read_text(encoding="utf-8")
+        self.assertIn("'Return' { $e.Handled = $true; & $finish 10 }", text)  # Return approves
+        self.assertIn("'Escape' { $e.Handled = $true; & $finish 11 }", text)  # Esc denies
+        self.assertIn("SetProcessDPIAware", text)
+        self.assertIn("CopyFromScreen", text)  # the blurred backdrop
+        self.assertIn("BlurEffect", text)
+        self.assertIn("data/*.ps1", Path(__file__).parents[1].joinpath("pyproject.toml").read_text())
+
+
+class FallbackTest(unittest.TestCase):
+    def test_plain_window_is_used_when_the_native_popup_fails(self):
+        real_popup, real_dialog, real_log = watch.show_popup, watch.show_dialog, watch.log
+        calls = []
+        watch.show_popup = lambda item, alive, **k: (_ for _ in ()).throw(watch.PopupError("no powershell"))
+        watch.show_dialog = lambda item, alive: calls.append("tk") or True
+        watch.log = lambda m, *a: calls.append(m)
+        try:
+            self.assertTrue(watch.show_best(watch.SAMPLES["enter"], lambda: True))
+        finally:
+            watch.show_popup, watch.show_dialog, watch.log = real_popup, real_dialog, real_log
+        self.assertEqual(calls[-1], "tk")
+        self.assertIn("native popup unavailable", calls[0])
+
+    def test_missing_script_raises_popup_error_before_launching_anything(self):
+        with self.assertRaises(watch.PopupError):
+            watch.show_popup(watch.SAMPLES["enter"], lambda: True, script=Path("does-not-exist.ps1"))
+
+
 class StartupTest(unittest.TestCase):
     def test_script_runs_the_watcher_hidden(self):
         script = watch.startup_script("C:\\Python312\\python.exe")

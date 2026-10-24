@@ -16,7 +16,7 @@ lab = "lab.entry:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-lab = ["data/*.toml"]
+lab = ["data/*.toml", "data/*.ps1"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
