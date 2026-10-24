@@ -53,11 +53,12 @@ Windows PC                         Proxmox host
 [storage]
 fast_disk    = "<discovered>"
 archive_disk = "<chosen at init>"
+snippet_disk = "<storage with 'snippets' content, for cloud-init user-data>"
 [network]
 bridge       = "<discovered>"
 [vm]
 vmid_range   = [1000, 1999]
-template_id  = 9000
+template_range = [9000, 9099]   # one golden template per distro; must not overlap vmid_range
 default_distro = "ubuntu-24.04"
 default_cores  = 1
 default_memory = 2048
@@ -100,7 +101,9 @@ The host config above is the **only** source for `fast_disk`, `archive_disk`, `s
 6. Build the golden template (§6).
 7. Write config; run `lab doctor`.
 
-`lab doctor` checks: storages exist and have free space, archive disk reachable and writable, template present, DB/Proxmox drift, Tailscale key valid/expiring, orphaned VMs/backups/tailnet devices, leftover `lab-verify-*` temp VMs. `--fix` only repairs safe things and asks before anything destructive.
+`lab doctor` checks: storages exist and have free space, archive disk reachable and writable, template present, DB/Proxmox drift, Tailscale key valid/expiring, orphaned VMs/backups/tailnet devices, leftover `lab-verify-*` temp VMs. v1 `doctor` is strictly read-only and exits 5 if any check fails; `--fix` (safe repairs, asks before anything destructive) comes later.
+
+Template build (implemented): verified image -> VM with a build-time cloud-init user-data snippet on the snippet storage -> wait for the guest agent -> run the toolchain check inside the guest -> generalise (cloud-init clean, host keys, machine-id, tailscale state) -> graceful shutdown -> remove the snippet drive -> `qm template`. A failed build destroys only the build VM it created.
 
 ## 6. Golden template and profiles
 
@@ -280,7 +283,7 @@ Approval delivery: MCP elicitation where the client supports it, otherwise the c
 
 Multi-user is in v1 (decision).
 
-- **Identity**: users reach the host over Tailscale SSH; the host resolves the caller's tailnet login (`tailscale whois` on the connecting address) and maps it to a lab user in `/etc/project-lab/users.toml` (`login`, `name`, `role`, optional quota overrides). Unknown logins are refused. No new passwords or tokens.
+- **Identity**: users reach the host over Tailscale SSH; the host resolves the caller's tailnet login (`tailscale whois` on the connecting address) and maps it to a lab user stored in the lab database (`users` table: login, name, role, quota overrides; managed with `lab user ...`, first admin created by `lab init`). Unknown logins are refused. No new passwords or tokens.
 - **Roles**: `admin` (sees and manages everything, exempt from quotas) and `user` (own projects only; cannot see other users' projects or archives).
 - **Ownership**: every project records `owner`. Stored in the VM description/tag and DB. Owner is the login user inside the VM (§15 Q3) and drives the tailnet owner tag.
 - **Tags**: each VM joins the tailnet with `tag:server` + `tag:user-<owner>` (ACL snippet printed by `lab init`; key minting per Q10). Admins reach every VM through the `server` tag rule; an owner reaches their own through the owner-tag rule.

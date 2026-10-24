@@ -1,0 +1,68 @@
+# Supported guest distributions (SPEC section 6). Adding one is a data change.
+#
+# NOTE: image URLs follow each project's published layout but have not been fetched
+# from a real host yet. `lab template check` HEADs every URL and its checksum entry.
+# Override or extend in /etc/project-lab/distros.toml (same format, merged by id).
+#
+# checksum_name defaults to the basename of image_url.
+
+[base_packages]
+# Installed in every golden template. Tailscale is installed separately (official script).
+apt = ["qemu-guest-agent", "openssh-server", "git", "curl", "wget", "ca-certificates",
+       "build-essential", "pkg-config", "python3", "python3-pip", "python3-venv",
+       "nodejs", "npm", "sudo"]
+dnf = ["qemu-guest-agent", "openssh-server", "git", "curl", "wget", "ca-certificates",
+       "gcc", "gcc-c++", "make", "pkgconf-pkg-config", "python3", "python3-pip",
+       "nodejs", "npm", "sudo"]
+
+[distro."ubuntu-22.04"]
+family = "apt"
+image_url = "https://cloud-images.ubuntu.com/releases/22.04/release/ubuntu-22.04-server-cloudimg-amd64.img"
+checksum_url = "https://cloud-images.ubuntu.com/releases/22.04/release/SHA256SUMS"
+checksum_type = "sha256"
+default_user = "ubuntu"
+
+[distro."ubuntu-24.04"]
+family = "apt"
+image_url = "https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img"
+checksum_url = "https://cloud-images.ubuntu.com/releases/24.04/release/SHA256SUMS"
+checksum_type = "sha256"
+default_user = "ubuntu"
+
+[distro."ubuntu-26.04"]
+family = "apt"
+image_url = "https://cloud-images.ubuntu.com/releases/26.04/release/ubuntu-26.04-server-cloudimg-amd64.img"
+checksum_url = "https://cloud-images.ubuntu.com/releases/26.04/release/SHA256SUMS"
+checksum_type = "sha256"
+default_user = "ubuntu"
+
+[distro."debian-12"]
+family = "apt"
+image_url = "https://cloud.debian.org/images/cloud/bookworm/latest/debian-12-genericcloud-amd64.qcow2"
+checksum_url = "https://cloud.debian.org/images/cloud/bookworm/latest/SHA512SUMS"
+checksum_type = "sha512"
+default_user = "debian"
+
+[distro."debian-13"]
+family = "apt"
+image_url = "https://cloud.debian.org/images/cloud/trixie/latest/debian-13-genericcloud-amd64.qcow2"
+checksum_url = "https://cloud.debian.org/images/cloud/trixie/latest/SHA512SUMS"
+checksum_type = "sha512"
+default_user = "debian"
+
+[distro."rocky-9"]
+family = "dnf"
+image_url = "https://dl.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud.latest.x86_64.qcow2"
+checksum_url = "https://dl.rockylinux.org/pub/rocky/9/images/x86_64/Rocky-9-GenericCloud.latest.x86_64.qcow2.CHECKSUM"
+checksum_type = "sha256"
+default_user = "rocky"
+
+[distro."almalinux-9"]
+family = "dnf"
+image_url = "https://repo.almalinux.org/almalinux/9/cloud/x86_64/images/AlmaLinux-9-GenericCloud-latest.x86_64.qcow2"
+checksum_url = "https://repo.almalinux.org/almalinux/9/cloud/x86_64/images/CHECKSUM"
+checksum_type = "sha256"
+default_user = "almalinux"
+
+# Fedora publishes a build number in the file name, so it must be pinned by the admin:
+# add a [distro."fedora-NN"] entry in /etc/project-lab/distros.toml with the exact URLs.

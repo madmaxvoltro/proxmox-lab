@@ -26,7 +26,8 @@ class Result:
 # treated as mutating, so a new command is dry-run-safe by default.
 _READ_ONLY = {
     ("qm", "list"), ("qm", "status"), ("qm", "config"), ("qm", "listsnapshot"),
-    ("pvesm", "status"), ("pvesm", "list"),
+    ("pvesm", "status"), ("pvesm", "list"), ("pvesm", "path"),
+    ("tailscale", "whois"), ("tailscale", "status"),
     ("pvesh", "get"),
     ("pveversion", None),
 }
@@ -54,7 +55,13 @@ class SubprocessRunner(Runner):
     def run(self, argv, *, input=None, check=True, timeout=None):
         argv = [str(a) for a in argv]
         log.debug("run %s", argv)
-        proc = subprocess.run(argv, input=input, capture_output=True, text=True, timeout=timeout)
+        try:
+            proc = subprocess.run(argv, input=input, capture_output=True, text=True, timeout=timeout)
+        except FileNotFoundError:
+            res = Result(argv, 127, "", f"command not found: {argv[0]} (is this the Proxmox host?)")
+            if check:
+                raise CommandError(argv, 127, res.stderr) from None
+            return res
         res = Result(argv, proc.returncode, proc.stdout, proc.stderr)
         if check and not res.ok:
             raise CommandError(argv, res.returncode, res.stderr)

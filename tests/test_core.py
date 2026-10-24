@@ -179,7 +179,7 @@ class ProxmoxTest(unittest.TestCase):
     def test_discovery(self):
         self.assertEqual(self.px.version(), "9.2.1")
         ids = {s["storage"] for s in self.px.storages()}
-        self.assertEqual(ids, {"nvme", "bigdisk"})
+        self.assertEqual(ids, {"nvme", "bigdisk", "local"})
         self.assertEqual(self.px.vm(100)["name"], "jellyfin")
         self.assertIsNone(self.px.vm(5))
 

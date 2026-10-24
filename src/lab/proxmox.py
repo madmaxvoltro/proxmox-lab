@@ -43,6 +43,20 @@ class Proxmox:
         res = self.r.run(["pvesh", "get", "/cluster/resources", "--type", "storage", "--output-format", "json"])
         return _json(res)
 
+    def node(self) -> str:
+        nodes = _json(self.r.run(["pvesh", "get", "/nodes", "--output-format", "json"]))
+        if not nodes:
+            raise ProxmoxError("no Proxmox node found")
+        return nodes[0]["node"]
+
+    def bridges(self) -> list:
+        res = self.r.run(["pvesh", "get", f"/nodes/{self.node()}/network", "--output-format", "json"])
+        return sorted(n["iface"] for n in _json(res) if n.get("type") in ("bridge", "OVSBridge"))
+
+    def storage_path(self, volid: str) -> str:
+        """Filesystem path for a volume ID, e.g. 'local:snippets/x.yaml'."""
+        return self.r.run(["pvesm", "path", volid]).stdout.strip()
+
     def storage_config(self, storage_id: str) -> dict:
         res = self.r.run(["pvesh", "get", f"/storage/{storage_id}", "--output-format", "json"])
         return _json(res)
@@ -90,6 +104,28 @@ class Proxmox:
                 argv += ["--storage", storage]
         self.r.run(argv)
 
+    def create(self, vmid: int, **opts) -> None:
+        argv = ["qm", "create", str(vmid)]
+        for k, v in opts.items():
+            argv += [f"--{k}", str(v)]
+        self.r.run(argv)
+
+    def to_template(self, vmid: int) -> None:
+        self.r.run(["qm", "template", str(vmid)])
+
+    def agent_ready(self, vmid: int) -> bool:
+        return self.r.run(["qm", "agent", str(vmid), "ping"], check=False).ok
+
+    def add_dir_command(self, storage_id: str, path: str, content: str, mountpoint: str | None = None) -> list:
+        argv = ["pvesm", "add", "dir", storage_id, "--path", path, "--content", content]
+        if mountpoint:  # Proxmox then treats the storage as offline when the disk is not mounted
+            argv += ["--is_mountpoint", mountpoint]
+        return argv
+
+    def add_dir_storage(self, storage_id: str, path: str, content: str, mountpoint: str | None = None) -> None:
+        """Register an existing directory as a Proxmox storage. Never creates or formats anything."""
+        self.r.run(self.add_dir_command(storage_id, path, content, mountpoint))
+
     def set(self, vmid: int, **opts) -> None:
         """qm set with key=value options; `delete` takes a list of keys to remove."""
         argv = ["qm", "set", str(vmid)]
@@ -125,13 +161,18 @@ class Proxmox:
     def restore(self, volid: str, vmid: int, storage: str) -> None:
         self.r.run(["qmrestore", volid, str(vmid), "--storage", storage])
 
-    def guest_exec(self, vmid: int, argv, *, stdin: str | None = None, check: bool = True):
-        """Run a command in the guest via the QEMU guest agent. `stdin` is never logged."""
+    def guest_exec(self, vmid: int, argv, *, stdin: str | None = None, check: bool = True,
+                   timeout: int | None = None):
+        """Run a command in the guest via the QEMU guest agent. `stdin` is never logged.
+
+        `timeout` is how long qm waits for the command (qm's own default is 30 s)."""
         cmd = ["qm", "guest", "exec", str(vmid)]
         if stdin is not None:
             cmd.append("--pass-stdin")
+        if timeout is not None:
+            cmd += ["--timeout", str(timeout)]
         cmd += ["--", *[str(a) for a in argv]]
-        res = self.r.run(cmd, input=stdin, check=check)
+        res = self.r.run(cmd, input=stdin, check=check, timeout=(timeout + 30) if timeout else None)
         try:
             return json.loads(res.stdout)  # {"exitcode": n, "out-data": "...", "err-data": "..."}
         except json.JSONDecodeError:

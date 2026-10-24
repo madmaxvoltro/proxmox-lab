@@ -21,18 +21,23 @@ class FakeProxmox(Runner):
         self.storages = storages or {
             "nvme": {"type": "lvmthin", "content": "images,rootdir", "total": 1 << 40, "used": 0},
             "bigdisk": {"type": "dir", "content": "backup", "total": 20 << 40, "used": 0},
+            "local": {"type": "dir", "content": "iso,vztmpl,snippets", "total": 100 << 30, "used": 0},
         }
+        self.bridges = ["vmbr0"]
         self.backups = {}  # volid -> dict(vmid, storage, size, corrupt)
         self.calls = []
         self.stdin_seen = []
         self._failures = []
         self._seq = 0
         self.guest_agent_ready = True
+        self.path_root = "/var/lib/vz"  # where `pvesm path` says dir storages live
+        self.guest_results = []  # (predicate(cmd_str), result dict) checked in order
+        self.guest_log = []  # commands run inside guests, as strings
 
     # test helpers ----------------------------------------------------------
-    def add_vm(self, vmid, name, *, status="stopped", template=False, **config):
+    def add_vm(self, vmid, name, *, status="stopped", template=False, tags="", **config):
         self.vms[int(vmid)] = {
-            "name": name, "status": status, "template": template,
+            "name": name, "status": status, "template": template, "tags": tags,
             "config": {"cores": "1", "memory": "2048", "scsi0": "nvme:vm-%d-disk-0,size=32G" % vmid, **config},
         }
 
@@ -100,7 +105,7 @@ class FakeProxmox(Runner):
             if kind == "vm":
                 rows = [
                     {"type": "qemu", "vmid": v, "name": d["name"], "status": d["status"],
-                     "template": int(d["template"]), "node": "pve"}
+                     "template": int(d["template"]), "tags": d.get("tags", ""), "node": "pve"}
                     for v, d in sorted(self.vms.items())
                 ]
             else:
@@ -110,6 +115,11 @@ class FakeProxmox(Runner):
                     for s, d in self.storages.items()
                 ]
             return self._ok(a, json.dumps(rows))
+        if path == "/nodes":
+            return self._ok(a, json.dumps([{"node": "pve", "status": "online"}]))
+        if path == "/nodes/pve/network":
+            rows = [{"iface": b, "type": "bridge"} for b in self.bridges] + [{"iface": "eno1", "type": "eth"}]
+            return self._ok(a, json.dumps(rows))
         if path == "/cluster/nextid":
             vmid = int(self._opt(a, "--vmid", 100))
             if vmid in self.vms:
@@ -118,11 +128,22 @@ class FakeProxmox(Runner):
         m = re.fullmatch(r"/storage/(\S+)", path)
         if m and m.group(1) in self.storages:
             d = self.storages[m.group(1)]
-            return self._ok(a, json.dumps({"storage": m.group(1), "type": d["type"], "content": d["content"]}))
+            cfg = {"storage": m.group(1), "type": d["type"], "content": d["content"]}
+            if d["type"] == "dir":
+                cfg["path"] = d.get("path", f"/mnt/{m.group(1)}")
+            return self._ok(a, json.dumps(cfg))
         return self._err(a, f"fake: unhandled pvesh path {path}")
 
     def _qm(self, a):
         sub = a[1]
+        if sub == "create":
+            vmid = int(a[2])
+            if vmid in self.vms:
+                return self._err(a, f"unable to create VM {vmid}: config file already exists")
+            cfg = {k.lstrip("-"): v for k, v in zip(a[3::2], a[4::2])}
+            name = cfg.pop("name", f"VM-{vmid}")
+            self.vms[vmid] = {"name": name, "status": "stopped", "template": False, "tags": "", "config": cfg}
+            return self._ok(a)
         if sub == "clone":
             src, new = int(a[2]), int(a[3])
             if src not in self.vms:
@@ -149,8 +170,24 @@ class FakeProxmox(Runner):
         if sub == "set":
             opts = a[3:]
             for k, v in zip(opts[::2], opts[1::2]):
-                vm["config"][k.lstrip("-")] = v
+                k = k.lstrip("-")
+                if k == "delete":
+                    vm["config"].pop(v, None)
+                elif k == "name":
+                    vm["name"] = v
+                elif k == "tags":
+                    vm["tags"] = v
+                else:
+                    vm["config"][k] = v
             return self._ok(a)
+        if sub == "template":
+            if vm["status"] != "stopped":
+                return self._err(a, "can't convert a running VM to template")
+            vm["template"] = True
+            return self._ok(a)
+        if sub == "agent":
+            ok = vm["status"] == "running" and self.guest_agent_ready
+            return self._ok(a) if ok else self._err(a, "QEMU guest agent is not running")
         if sub == "resize":
             disk, size = a[3], a[4]
             vm["config"][disk] = re.sub(r"size=\S+", f"size={size.lstrip('+')}", vm["config"].get(disk, ""))
@@ -171,10 +208,27 @@ class FakeProxmox(Runner):
         if sub == "guest":
             if vm["status"] != "running" or not self.guest_agent_ready:
                 return self._err(a, f"QEMU guest agent is not running")
-            return self._ok(a, json.dumps({"exitcode": 0, "out-data": "", "err-data": ""}))
+            cmd = " ".join(a[a.index("--") + 1:])
+            self.guest_log.append(cmd)
+            for pred, result in self.guest_results:
+                if pred(cmd):
+                    return Result(a, result.get("exitcode", 0), json.dumps({"exited": 1, **result}), "")
+            return self._ok(a, json.dumps({"exited": 1, "exitcode": 0, "out-data": "", "err-data": ""}))
         return self._err(a, f"fake: unhandled qm {sub}")
 
     def _pvesm(self, a):
+        if a[1] == "path":
+            storage, _, rest = a[2].partition(":")
+            if storage not in self.storages:
+                return self._err(a, f"storage '{storage}' does not exist")
+            return self._ok(a, f"{self.path_root}/{rest}\n")
+        if a[1] == "add":
+            sid = a[3]
+            if sid in self.storages:
+                return self._err(a, f"storage ID '{sid}' already defined")
+            self.storages[sid] = {"type": a[2], "content": self._opt(a, "--content", ""),
+                                  "total": 20 << 40, "used": 0}
+            return self._ok(a)
         if a[1] == "list":
             sid = a[2]
             vmid = self._opt(a, "--vmid")

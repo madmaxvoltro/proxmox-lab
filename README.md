@@ -2,7 +2,7 @@
 
 Personal project lab on Proxmox: `lab create foo` gives you an Ubuntu 24.04 VM on the fast disk, joined to your Tailscale network with Tailscale SSH. `lab archive foo` moves it to the archive disk (verified, auto-rollback on failure) and removes it from the tailnet; `lab restore foo` brings it back.
 
-Status: **M0 done** (scaffold, config, SQLite, Proxmox wrapper, dry-run, fake-Proxmox tests). See [docs/SPEC.md](docs/SPEC.md) and [docs/FEATURES.md](docs/FEATURES.md).
+Status: **M0 + M1 implemented and unit-tested against a fake Proxmox; not yet run on a real host.** Available: `lab init`, `lab doctor`, `lab template list|check|add|update|rm`, `lab distros`, `lab discover`, `--dry-run`. See [docs/SPEC.md](docs/SPEC.md) and [docs/FEATURES.md](docs/FEATURES.md).
 
 ## Layout
 
