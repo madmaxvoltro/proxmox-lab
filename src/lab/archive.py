@@ -305,8 +305,9 @@ class ArchiveOps:
                 progress.plan(self.say, 1 + (2 if start else 0) + (1 if start and self._tailnet_managed(row) else 0))
                 self.say(f"Restoring {name} to VMID {vmid} on {fast}")
                 self.px.restore(arc["volid"], vmid, fast, on_line=progress.line_cb(self.say))
+                nic = {"net0": netutil.net0(net, self.px.config(vmid).get("net0"))}
                 self.px.set(vmid, name=host, tags=f"lab;owner-{owner}", cores=row["cpu"], memory=row["ram_mb"],
-                            cicustom=f"user={self._snippet_volid(name)}", **netutil.ipconfig(net, ip))
+                            cicustom=f"user={self._snippet_volid(name)}", **nic, **netutil.ipconfig(net, ip))
                 self.io.write_text(snippet, user_data(name, owner))
                 self.db.update_project(name, state="stopped", storage_id=fast, tailnet_ip=None)
             except BaseException as e:

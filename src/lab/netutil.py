@@ -15,6 +15,35 @@ def ipconfig(net: Network, ip: str | None = None) -> dict:
     return {"ipconfig0": "ip=dhcp"}
 
 
+def net0(net: Network, current: str | None = None) -> str:
+    """The NIC definition for a project VM: keeps the model and MAC address of `current` (what clone
+    or restore produced) and forces the configured bridge and VLAN tag. Without `current`, a fresh NIC."""
+    parts = [p for p in (current or "virtio").split(",") if p and not p.startswith(("bridge=", "tag="))]
+    parts.append(f"bridge={net.bridge}")
+    if net.vlan:
+        parts.append(f"tag={net.vlan}")
+    return ",".join(parts)
+
+
+def host_vlan(runner, bridge: str, subnet: str) -> int:
+    """VLAN id when the host has an interface like `vmbr1.60` holding an address in `subnet`, else 0."""
+    res = runner.run(["ip", "-4", "-o", "addr", "show"], check=False)
+    try:
+        want = ipaddress.ip_network(subnet, strict=False)
+    except ValueError:
+        return 0
+    for m in re.finditer(r"^\d+:\s+(\S+)\s+inet (\S+)", res.stdout or "", re.M):
+        iface, addr = m.groups()
+        vm = re.fullmatch(re.escape(bridge) + r"\.(\d+)", iface)
+        if vm:
+            try:
+                if ipaddress.ip_interface(addr).network == want:
+                    return int(vm.group(1))
+            except ValueError:
+                continue
+    return 0
+
+
 def pool(net: Network):
     lo, hi = int(ipaddress.ip_address(net.pool_start)), int(ipaddress.ip_address(net.pool_end))
     return [str(ipaddress.ip_address(i)) for i in range(lo, hi + 1)]

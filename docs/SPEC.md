@@ -56,6 +56,7 @@ archive_disk = "<chosen at init>"
 snippet_disk = "<storage with 'snippets' content, for cloud-init user-data>"
 [network]
 bridge       = "<discovered>"
+vlan         = 0             # VLAN tag on a VLAN-aware bridge (0 = untagged). `lab init` suggests it from a host interface like vmbr1.60
 mode         = "dhcp"        # dhcp | static. `lab init` probes the bridge for a DHCP server and picks the default
 # static mode only (the network has no DHCP; lab hands out addresses itself):
 subnet       = "192.168.10.0/24"

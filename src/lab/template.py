@@ -162,11 +162,12 @@ class TemplateBuilder:
             fast = cfg.storage.fast_disk
             self.px.create(
                 vmid, name=build_name, ostype="l26", memory=2048, cores=2, cpu="host",
-                net0=f"virtio,bridge={cfg.network.bridge}", scsihw="virtio-scsi-pci",
+                net0=netutil.net0(cfg.network), scsihw="virtio-scsi-pci",
                 agent="enabled=1", serial0="socket", vga="serial0", tags=TAG,
             )
             created = True
-            progress.detail(self.say, f"{build_name} on bridge {cfg.network.bridge}")
+            progress.detail(self.say, f"{build_name} on bridge {cfg.network.bridge}"
+                            + (f", VLAN {cfg.network.vlan}" if cfg.network.vlan else ""))
             self.say(f"Importing the image into {fast}")
             self.px.set(vmid, scsi0=f"{fast}:0,import-from={image},discard=on,ssd=1",
                         on_line=progress.line_cb(self.say))

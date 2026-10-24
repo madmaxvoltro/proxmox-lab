@@ -129,6 +129,10 @@ def run_init(px: Proxmox, io: HostIO, runner: Runner, ui: Prompter, *, existing:
         net.pool_end = ui.ask("Last address lab may assign", net.pool_end or None)
         ui.info("Keep that range free of anything else (reserve it in your router). lab also pings an "
                 "address before using it.")
+    suggested = netutil.host_vlan(runner, net.bridge, net.subnet) if net.mode == "static" else 0
+    if suggested:
+        ui.info(f"The host has {net.bridge}.{suggested} in that subnet, so the VMs probably need VLAN {suggested}.")
+    net.vlan = int(ui.ask("VLAN tag for project VMs (0 = untagged)", str(suggested or net.vlan)))
     net.validate()
 
     # vmid range -------------------------------------------------------------------------------

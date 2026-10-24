@@ -27,6 +27,7 @@ class Network:
     """How project VMs get an address on `bridge`. `dhcp`: the network hands them out.
     `static`: lab assigns each VM one address from [pool_start, pool_end] (checked free with a ping)."""
     bridge: str = ""
+    vlan: int = 0           # VLAN tag for project VMs on a VLAN-aware bridge; 0 = untagged
     mode: str = "dhcp"      # dhcp | static
     subnet: str = ""        # static: CIDR, e.g. 192.168.10.0/24
     gateway: str = ""       # static
@@ -35,6 +36,8 @@ class Network:
     pool_end: str = ""      # static
 
     def validate(self) -> None:
+        if not isinstance(self.vlan, int) or isinstance(self.vlan, bool) or not (self.vlan == 0 or 2 <= self.vlan <= 4094):
+            raise UsageError("network.vlan must be 0 (untagged) or between 2 and 4094")
         if self.mode not in ("dhcp", "static"):
             raise UsageError("network.mode must be 'dhcp' or 'static'")
         if self.mode == "dhcp":

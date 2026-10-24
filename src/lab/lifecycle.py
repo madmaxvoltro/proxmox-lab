@@ -144,7 +144,8 @@ class Lab(ArchiveOps, GuestOps):
                  on_line=progress.line_cb(self.say))
         self.say("Configuring the VM")
         self.io.write_text(snippet, user_data(name, owner))
-        px.set(vmid, cores=cpu, memory=ram_mb, tags=f"lab;owner-{owner}", **netutil.ipconfig(cfg.network, ip),
+        nic = {"net0": netutil.net0(cfg.network, px.config(vmid).get("net0"))}  # current bridge/VLAN, clone's MAC
+        px.set(vmid, cores=cpu, memory=ram_mb, tags=f"lab;owner-{owner}", **nic, **netutil.ipconfig(cfg.network, ip),
                cicustom=f"user={self._snippet_volid(name)}",
                description=f"lab-project name={name} owner={owner} created={int(time.time())}")
         progress.detail(self.say, f"{cpu} vCPU, {ram_mb} MiB RAM, {disk_gb} GiB disk" + (f", address {ip}" if ip else ""))

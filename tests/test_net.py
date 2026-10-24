@@ -289,6 +289,89 @@ class InitAddressingTest(unittest.TestCase):
         self.assertTrue(any("Could not probe" in m for m in ui.log))
 
 
+class VlanTest(Base):
+    def setUp(self):
+        super().setUp()
+        self.cfg.network.vlan = 60
+        self.fake.vms[9000]["config"]["net0"] = "virtio=BC:24:11:AA:BB:CC,bridge=vmbr0,firewall=1"
+
+    def net0(self, name):
+        return self.fake.vms[self.db.get_project(name)["vmid"]]["config"]["net0"]
+
+    def test_net0_helper_keeps_mac_and_options_and_replaces_bridge_and_tag(self):
+        net = self.cfg.network
+        self.assertEqual(netutil.net0(net), "virtio,bridge=vmbr0,tag=60")
+        self.assertEqual(netutil.net0(net, "virtio=BC:24:11:AA:BB:CC,bridge=vmbr9,tag=5,firewall=1"),
+                         "virtio=BC:24:11:AA:BB:CC,firewall=1,bridge=vmbr0,tag=60")
+        net.vlan = 0
+        self.assertEqual(netutil.net0(net, "virtio=BC:24:11:AA:BB:CC,bridge=vmbr1,tag=5"),
+                         "virtio=BC:24:11:AA:BB:CC,bridge=vmbr0")  # moving to an untagged network drops the tag
+
+    def test_vlan_validation(self):
+        for bad in (-1, 1, 4095, 5000):
+            cfg = make_cfg()
+            cfg.network.vlan = bad
+            with self.assertRaises(UsageError, msg=str(bad)):
+                cfg.validate()
+        for good in (0, 2, 60, 4094):
+            cfg = make_cfg()
+            cfg.network.vlan = good
+            cfg.validate()
+
+    def test_create_puts_the_vm_on_the_configured_vlan(self):
+        self.lab().create("a")
+        self.assertEqual(self.net0("a"), "virtio=BC:24:11:AA:BB:CC,firewall=1,bridge=vmbr0,tag=60")
+
+    def test_restore_follows_the_current_vlan(self):
+        self.lab().create("a")
+        self.lab().archive("a")
+        self.cfg.network.vlan = 70
+        self.lab().restore("a")
+        self.assertIn("tag=70", self.net0("a"))
+        self.assertNotIn("tag=60", self.net0("a"))
+
+    def test_template_build_vm_is_tagged_and_says_so(self):
+        fake, fio = FakeProxmox(), make_io()
+        cfg = make_cfg()
+        cfg.network.vlan = 60
+        out = StringIO()
+        rep = Reporter(out)
+        TemplateBuilder(cfg, Proxmox(fake), fio, DB(":memory:"), catalogue=CATALOGUE, progress=rep,
+                        sleep=lambda s: None).build("ubuntu-24.04")
+        created = [c for c in fake.calls if c[:2] == ["qm", "create"]][0]
+        self.assertEqual(created[created.index("--net0") + 1], "virtio,bridge=vmbr0,tag=60")
+        self.assertIn("VLAN 60", out.getvalue())
+
+    def test_host_vlan_is_found_from_the_bridge_subinterface(self):
+        class R:
+            def run(self, argv, **kw):
+                return Result(argv, 0, "2: vmbr1.10    inet 10.10.10.1/24 scope global vmbr1.10\n"
+                                       "3: vmbr1.60    inet 10.10.60.1/24 scope global vmbr1.60\n"
+                                       "4: vmbr0.60    inet 10.10.60.1/24 scope global vmbr0.60\n")
+        self.assertEqual(netutil.host_vlan(R(), "vmbr1", "10.10.60.0/24"), 60)
+        self.assertEqual(netutil.host_vlan(R(), "vmbr1", "10.10.99.0/24"), 0)
+        self.assertEqual(netutil.host_vlan(R(), "vmbr1", "garbage"), 0)
+        self.assertEqual(netutil.host_vlan(StubRunner(Result([], 1)), "vmbr1", "10.10.60.0/24"), 0)
+
+    def test_init_suggests_the_vlan_from_the_host(self):
+        fake, fio, db = FakeProxmox(), make_io(), DB(":memory:")
+        fio.files.pop("/etc/project-lab/ts-oauth")
+        fio.dhcp = False
+
+        class R:
+            def run(self, argv, **kw):
+                if "show" in argv and "dev" not in argv:
+                    return Result(argv, 0, "3: vmbr0.60    inet 10.10.60.1/24 scope global vmbr0.60\n")
+                return Result(argv, 1)
+        ui = ScriptedPrompter({"Fast disk": "nvme", "Archive disk": "bigdisk", "Your tailnet login": "m@x.io",
+                               "Subnet": "10.10.60.0/24", "Gateway": "10.10.60.1", "DNS": "1.1.1.1",
+                               "First address": "10.10.60.2", "Last address": "10.10.60.254"}, assume_yes=True)
+        res = init_mod.run_init(Proxmox(fake), fio, R(), ui, existing=config_mod.Config(),
+                                config_file="/etc/project-lab/config.toml", db=db, env={})
+        self.assertEqual(res.config.network.vlan, 60)
+        self.assertTrue(any("probably need VLAN 60" in m for m in ui.log))
+
+
 class MigrationTest(unittest.TestCase):
     def test_static_ip_is_unique_but_null_is_not(self):
         db = DB(":memory:")
