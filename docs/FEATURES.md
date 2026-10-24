@@ -13,7 +13,6 @@ Legend: **P0** must for v1 · **P1** v1 if time allows · **P2** later · ⚠ ha
 | F06 | `delete` with typed confirmation, removes tailnet device | P0 |
 | F07 | `clone` project → project | P1 |
 | F08 | `snap` / `rollback` / `snaps` | P1 |
-
 | F09 | Defaults 1 vCPU / 2 GB / 32 GB; `--cpu --ram --disk` and `--size small\|medium\|large` presets | P0 |
 | F10 | `--distro` (ubuntu 22.04/24.04/26.04, debian 12/13, fedora, rocky/alma), data-driven `distros.toml` | P0 |
 | F11 | Lazy per-distro template build on first use; `template list\|add\|update\|rm` | P0 |
