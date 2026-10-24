@@ -28,6 +28,7 @@ _READ_ONLY = {
     ("qm", "list"), ("qm", "status"), ("qm", "config"), ("qm", "listsnapshot"),
     ("pvesm", "status"), ("pvesm", "list"), ("pvesm", "path"),
     ("tailscale", "whois"), ("tailscale", "status"),
+    ("zstd", "-t"),
     ("pvesh", "get"),
     ("pveversion", None),
 }

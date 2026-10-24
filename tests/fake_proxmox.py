@@ -31,6 +31,8 @@ class FakeProxmox(Runner):
         self._seq = 0
         self.guest_agent_ready = True
         self.ignore_shutdown = False
+        self.backup_size = 1 << 30
+        self.hooks = []  # (predicate, fn) run before dispatch; fn may raise to simulate a crash/interrupt
         self.path_root = "/var/lib/vz"  # where `pvesm path` says dir storages live
         self.guest_results = []  # (predicate(cmd_str), result dict) checked in order
         self.guest_log = []  # commands run inside guests, as strings
@@ -60,6 +62,9 @@ class FakeProxmox(Runner):
         self.calls.append(argv)
         if input is not None:
             self.stdin_seen.append(input)
+        for pred, fn in self.hooks:
+            if pred(argv):
+                fn(argv)
         for pred, rc, err in self._failures:
             if pred(argv):
                 res = Result(argv, rc, "", err)
@@ -94,6 +99,12 @@ class FakeProxmox(Runner):
             return self._vzdump(a)
         if cmd == "qmrestore":
             return self._qmrestore(a)
+        if cmd == "zstd":
+            rest = a[2][len(self.path_root) + 1:]
+            for volid, b in self.backups.items():
+                if volid.split(":", 1)[1] == rest:
+                    return self._err(a, "zstd: corrupted data", 1) if b["corrupt"] else self._ok(a)
+            return self._err(a, f"zstd: {a[2]}: No such file", 1)
         return self._err(a, f"fake: unknown command {cmd}", 127)
 
     def _opt(self, a, flag, default=None):
@@ -225,6 +236,11 @@ class FakeProxmox(Runner):
             if storage not in self.storages:
                 return self._err(a, f"storage '{storage}' does not exist")
             return self._ok(a, f"{self.path_root}/{rest}\n")
+        if a[1] == "free":
+            if a[2] not in self.backups:
+                return self._err(a, f"volume '{a[2]}' does not exist")
+            del self.backups[a[2]]
+            return self._ok(a)
         if a[1] == "add":
             sid = a[3]
             if sid in self.storages:
@@ -255,7 +271,7 @@ class FakeProxmox(Runner):
             vm["status"] = "stopped"  # vzdump stop-mode shuts the guest down itself
         self._seq += 1
         volid = f"{sid}:backup/vzdump-qemu-{vmid}-{self._seq:04d}.vma.zst"
-        self.backups[volid] = {"vmid": vmid, "storage": sid, "size": 1 << 30, "corrupt": False,
+        self.backups[volid] = {"vmid": vmid, "storage": sid, "size": self.backup_size, "corrupt": False,
                                "name": vm["name"], "config": dict(vm["config"])}
         return self._ok(a, f"INFO: creating vzdump archive '{volid}'\nINFO: Finished Backup of VM {vmid}\n")
 

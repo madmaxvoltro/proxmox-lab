@@ -9,6 +9,8 @@ from pathlib import Path
 
 from . import access, quotas
 from .access import Caller
+from .archive import ArchiveOps
+from .cloudinit import user_data  # noqa: F401  (re-exported)
 from .config import Config
 from .db import DB
 from .errors import AccessError, LabError, PreconditionError, UsageError
@@ -21,22 +23,6 @@ from .units import hostname, to_gib, to_mib, validate_name
 
 log = logging.getLogger("lab.lifecycle")
 SHUTDOWN_TIMEOUT = 120
-
-
-def user_data(name: str, owner: str) -> str:
-    """Per-VM cloud-init: hostname and the owner as the only login user (no password, no keys:
-    access is Tailscale SSH or the guest agent). Holds no secrets, so it may stay on disk."""
-    return "\n".join([
-        "#cloud-config",
-        f"hostname: {hostname(name)}",
-        "manage_etc_hosts: true",
-        "users:",
-        f"  - name: {owner}",
-        "    shell: /bin/bash",
-        "    lock_passwd: true",
-        "    sudo: ALL=(ALL) NOPASSWD:ALL",
-        "",
-    ])
 
 
 def resolve_resources(cfg: Config, size=None, cpu=None, ram=None, disk=None) -> tuple:
@@ -60,7 +46,7 @@ def resolve_resources(cfg: Config, size=None, cpu=None, ram=None, disk=None) -> 
     return c, r, d
 
 
-class Lab:
+class Lab(ArchiveOps):
     def __init__(self, cfg: Config, px: Proxmox, io: HostIO, db: DB, templates: TemplateBuilder,
                  ts: Tailscale, caller: Caller, *, lock_dir: str | None = None, sleep=time.sleep,
                  monotonic=time.monotonic, say=lambda m: None, agent_timeout: float = 300):
@@ -258,14 +244,24 @@ class Lab:
             self.px.stop(vmid)
 
     # delete / protect ----------------------------------------------------------------
-    def delete(self, name: str, confirm: str, force: bool = False) -> None:
+    def delete(self, name: str, confirm: str, force: bool = False, archives: bool = False) -> None:
+        """Destroy a project. Its archives are kept separate: they are only deleted with
+        `archives=True`, and a project that has any refuses to be deleted without it."""
         if confirm != name:
             raise UsageError(f"type the project name to confirm deletion: expected {name!r}")
         row = self._mine(name)
-        if row["state"] == "archived":
-            raise PreconditionError(f"{name} is archived; deleting archives comes with the archive workflow")
         if row["protected"]:
             raise PreconditionError(f"{name} is protected; run `lab unprotect {name}` first")
+        held = self.db.list_archives(name)
+        if held and not archives:
+            raise PreconditionError(
+                f"{name} has {len(held)} archive(s); deleting it would orphan them. "
+                "Pass --archives to delete the archives too.")
+        if row["state"] == "archived":
+            with self._global_lock():
+                self._delete_archives(name, held)
+                self.db.delete_project(name)
+            return
         with self._global_lock():
             vm = self._live_vm(row)
             jid = self.db.journal_begin(name, "delete", self.caller.name)
@@ -280,6 +276,7 @@ class Lab:
                 self.db.journal_finish(jid, "failed", str(e)[:300])
                 raise
             self.io.remove(self.px.storage_path(self._snippet_volid(name)))
+            self._delete_archives(name, held)
             self.db.delete_project(name)
             self.db.journal_finish(jid, "ok")
 

@@ -164,12 +164,26 @@ class Proxmox:
         res = self.r.run(["vzdump", str(vmid), "--storage", storage, "--mode", mode, "--compress", compress])
         text = res.stdout + res.stderr
         m = re.search(r"creating vzdump archive '([^']+)'", text) or re.search(r"archive file: (\S+)", text)
-        if not m:
-            raise ProxmoxError("vzdump succeeded but no archive path was reported")
-        return m.group(1)
+        # vzdump reports a file path (or a volid, depending on storage); callers that need the
+        # volume ID should diff `backups()` instead of trusting this.
+        return m.group(1) if m else ""
 
     def restore(self, volid: str, vmid: int, storage: str) -> None:
         self.r.run(["qmrestore", volid, str(vmid), "--storage", storage])
+
+    def free_volume(self, volid: str) -> None:
+        """Delete one backup volume. Callers must only pass volumes lab created."""
+        self.r.run(["pvesm", "free", volid])
+
+    def test_archive(self, path: str) -> None:
+        """zstd integrity test of a backup file; raises CommandError if corrupt."""
+        self.r.run(["zstd", "-t", path])
+
+    def disconnect_network(self, vmid: int) -> None:
+        """Set link_down on net0 so a trial-restored copy can never reach (or collide on) the LAN."""
+        net0 = self.config(vmid).get("net0")
+        if net0 and "link_down" not in net0:
+            self.set(vmid, net0=net0 + ",link_down=1")
 
     def guest_exec(self, vmid: int, argv, *, stdin: str | None = None, check: bool = True,
                    timeout: int | None = None):

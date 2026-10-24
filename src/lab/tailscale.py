@@ -84,6 +84,15 @@ class Tailscale:
             pass
         return Enrolment(ip[0].strip(), dns)
 
+    def reset_identity(self, vmid: int) -> None:
+        """Drop any Tailscale state carried in a restored disk so the VM enrols as a fresh device."""
+        res = self.px.guest_exec(
+            vmid, ["sh", "-c", "systemctl stop tailscaled; rm -f /var/lib/tailscale/tailscaled.state; "
+                               "systemctl start tailscaled"], check=False, timeout=60)
+        if res.get("exitcode", 1) != 0:
+            raise TailscaleError("could not reset the Tailscale identity in the restored VM: "
+                                 + (res.get("err-data") or "").strip()[-200:])
+
     def logout(self, vmid: int) -> bool:
         """Best effort: leave the tailnet so the device disappears. Returns whether the guest confirmed."""
         try:

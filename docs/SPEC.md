@@ -165,6 +165,15 @@ Exit codes are stable (0 ok, 2 usage, 3 precondition failed, 4 verification fail
 - **quotas**: vCPU, RAM and VM count are counted for running projects; disk for all non-archived projects. Defaults in `[quota]`, per-user overrides in the user record, admins exempt.
 - **users**: `lab user add|list|remove` (admin); cannot remove a user who owns projects or the last admin.
 
+### 7.2 Archive and restore (implemented in M3)
+
+- **archive**: under the global lock and a journal entry: space check on the archive disk (disk size x1.2), graceful stop (never forced), `vzdump` to the archive disk, then verify: backup listed with a plausible size, `zstd -t`, SHA-256 recorded, **trial restore** to a temporary `lab-verify-<name>` VM with `link_down` on its NIC, **boot test** (agent up, root mounted, owner exists, hostname correct), temp VM destroyed. Only then the **commit point**: archive recorded as verified, and only then the original VM is destroyed. Old archives beyond `archive.keep` are pruned only after the new one verified.
+- **failure before commit**: the new backup and temp VM are deleted, the original is restarted exactly as it was (re-enrolled in Tailscale if it was running), the project state is restored, and the error says the archive FAILED, the backup was deleted and the project is untouched. Ctrl-C and crashes get the same treatment.
+- **recover** (`lab recover NAME`): resumes from the journal. Before the commit point it rolls back; after it, it rolls forward (and refuses to destroy the VM if the verified backup has vanished).
+- **restore**: needs a verified archive present on the archive disk, passes the quota check, restores to the fast disk under a new VMID, regenerates the per-VM cloud-init snippet, drops the old Tailscale identity inside the guest and enrols fresh. A failed restore is rolled back and the archive stays. The archive is kept after restore.
+- **keep-active**: `--keep-active` verifies and records an archive but keeps the VM.
+- **delete** refuses a project that has archives unless `--archives` is passed; works on archived projects.
+
 ## 8. Auto-setup on create
 
 If a project source is provided (`--repo URL`, `--from PATH`) or already present in the VM, lab detects, in order, and runs inside the VM after first boot:

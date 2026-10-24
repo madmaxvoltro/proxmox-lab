@@ -61,7 +61,7 @@ class FakeIO(HostIO):
         return path in self.root_device_paths
 
     def sha256(self, path, algo="sha256"):
-        return hashlib.new(algo, self.files[path]).hexdigest()
+        return hashlib.new(algo, self.files.get(path, path.encode())).hexdigest()
 
     def makedirs(self, path, mode=0o750):
         self.made.append(path)

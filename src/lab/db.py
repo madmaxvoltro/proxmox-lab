@@ -225,6 +225,9 @@ class DB:
                 (status, detail, _now(), jid),
             )
 
+    def get_journal(self, jid: int):
+        return self.conn.execute("SELECT * FROM journal WHERE id=?", (jid,)).fetchone()
+
     def open_journal(self):
         """Operations still marked running: candidates for `lab doctor` resume/rollback."""
         return self.conn.execute("SELECT * FROM journal WHERE status='running' ORDER BY id").fetchall()

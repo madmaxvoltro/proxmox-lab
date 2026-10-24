@@ -47,8 +47,10 @@ class Base(unittest.TestCase):
     def lab(self, caller=None):
         tb = TemplateBuilder(self.cfg, self.px, self.io, self.db, catalogue=CATALOGUE,
                              sleep=lambda s: None, agent_timeout=1)
-        return Lab(self.cfg, self.px, self.io, self.db, tb, Tailscale(self.cfg, self.px, self.io),
-                   caller or self.max, lock_dir=self.tmp.name, sleep=lambda s: None, agent_timeout=0)
+        lab = Lab(self.cfg, self.px, self.io, self.db, tb, Tailscale(self.cfg, self.px, self.io),
+                  caller or self.max, lock_dir=self.tmp.name, sleep=lambda s: None, agent_timeout=0)
+        lab.verify_timeout = 0  # sleep is a no-op in tests, so a long timeout would spin for real
+        return lab
 
     def vm_names(self):
         return {v["name"] for v in self.fake.vms.values()}
@@ -372,10 +374,10 @@ class DeleteTest(Base):
         self.lab().delete("api", "api")
         self.assertIsNone(self.db.get_project("api"))
 
-    def test_archived_project_is_not_deleted_here(self):
-        self.db.update_project("api", state="archived")
-        with self.assertRaisesRegex(PreconditionError, "archived"):
-            self.lab().delete("api", "api")
+    def test_archived_project_without_archive_records_just_leaves_the_index(self):
+        self.db.update_project("api", state="archived", vmid=None)
+        self.lab().delete("api", "api")
+        self.assertIsNone(self.db.get_project("api"))
 
 
 class CallerTest(unittest.TestCase):

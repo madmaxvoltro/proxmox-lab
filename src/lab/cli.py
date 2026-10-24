@@ -62,8 +62,17 @@ def build_parser() -> argparse.ArgumentParser:
     st.add_argument("name")
     sub.choices["stop"].add_argument("--force", action="store_true", help="hard stop if graceful shutdown times out")
     sub.choices["restart"].add_argument("--force", action="store_true")
+    ar = sub.add_parser("archive", help="back up to the archive disk, verify, then free the fast disk")
+    ar.add_argument("name")
+    ar.add_argument("--keep-active", action="store_true", help="verify only; keep the active VM")
+    ar.add_argument("--no-boot-test", action="store_true", help="skip the boot test (discouraged)")
+    rs = sub.add_parser("restore", help="bring an archived project back onto the fast disk")
+    rs.add_argument("name")
+    rs.add_argument("--no-start", action="store_true")
+    sub.add_parser("recover", help="finish or undo an interrupted operation").add_argument("name")
     d = sub.add_parser("delete", help="destroy a project VM")
     d.add_argument("name")
+    d.add_argument("--archives", action="store_true", help="also delete the project's archives")
     d.add_argument("--yes", action="store_true", help="confirm by flag instead of typing the name")
     d.add_argument("--force", action="store_true")
 
@@ -226,8 +235,16 @@ def cmd_project(ctx):
         _emit(a, res, json.dumps(res, indent=2, default=str))
     elif a.cmd == "delete":
         confirm = a.name if a.yes else input(f"Type the project name ({a.name}) to confirm deletion: ").strip()
-        lab.delete(a.name, confirm, force=a.force)
+        lab.delete(a.name, confirm, force=a.force, archives=a.archives)
         print(f"deleted {a.name}")
+    elif a.cmd == "archive":
+        res = lab.archive(a.name, keep_active=a.keep_active, boot_test=not a.no_boot_test)
+        _emit(a, res, f"{a.name}: {res['state']} (verified archive on the archive disk)")
+    elif a.cmd == "restore":
+        res = lab.restore(a.name, start=not a.no_start)
+        _emit(a, res, f"{a.name}: {res['state']}" + (f"\n  connect: {res['ssh']}" if res.get("ssh") else ""))
+    elif a.cmd == "recover":
+        print(lab.recover(a.name))
     elif a.cmd in ("protect", "unprotect"):
         lab.set_protected(a.name, a.cmd == "protect")
         print(f"{a.name}: {a.cmd}ed")
@@ -273,7 +290,8 @@ def main(argv=None) -> int:
             return cmd_template(ctx)
         elif args.cmd == "user":
             return cmd_user(ctx)
-        elif args.cmd in ("create", "list", "status", "start", "stop", "restart", "delete", "protect", "unprotect"):
+        elif args.cmd in ("create", "list", "status", "start", "stop", "restart", "delete", "protect", "unprotect",
+                          "archive", "restore", "recover"):
             return cmd_project(ctx)
         return 0
     except LabError as e:
