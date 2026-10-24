@@ -53,9 +53,27 @@ class ConfigTest(unittest.TestCase):
 
     def test_rejects_typos_and_bad_values(self):
         for bad in ({"storage": {"fast_dsk": "x"}}, {"bogus": {}}, {"vm": {"clone_mode": "thin"}},
-                    {"vm": {"vmid_range": [50, 60]}}, {"vm": {"vmid_range": [9000, 9100], "template_id": 9000}}):
+                    {"vm": {"vmid_range": [50, 60]}}, {"vm": {"vmid_range": [9000, 9100], "template_range": [9050, 9060]}}):
             with self.assertRaises(UsageError, msg=str(bad)):
                 config_mod.from_dict(bad)
+
+    def test_project_cannot_choose_disks(self):
+        ok = config_mod.project_request({"distro": "debian-12", "cpu": 4, "ram": "8G", "disk": "64G"})
+        self.assertEqual(ok["cpu"], 4)
+        for bad in ({"fast_disk": "nvme"}, {"storage": "bigdisk"}, {"archive_disk": "x"},
+                    {"bridge": "vmbr9"}, {"state_dir": "/tmp"}, {"cpu": 2, "snippet_disk": "local"}):
+            with self.assertRaises(UsageError, msg=str(bad)):
+                config_mod.project_request(bad)
+        with self.assertRaises(UsageError):
+            config_mod.project_request({"clone_mode": "thin"})
+
+    def test_dumps_roundtrips(self):
+        import tomllib
+        c = config_mod.Config()
+        c.storage.fast_disk = "nv"
+        c.vm.vmid_range = (2000, 2100)
+        again = config_mod.from_dict(tomllib.loads(config_mod.dumps(c)))
+        self.assertEqual(again.to_dict(), c.to_dict())
 
     def test_missing_file_gives_defaults(self):
         self.assertEqual(config_mod.load("/nonexistent/x.toml").vm.default_cores, 1)

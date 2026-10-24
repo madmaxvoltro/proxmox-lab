@@ -1,6 +1,7 @@
 """Host configuration (SPEC section 4). Storage IDs, bridge and addresses are never defaulted."""
 
 import dataclasses
+import json
 import os
 import tomllib
 from dataclasses import dataclass, field
@@ -17,6 +18,7 @@ DEFAULT_STATE_DIR = "/var/lib/project-lab"
 class Storage:
     fast_disk: str = ""
     archive_disk: str = ""
+    snippet_disk: str = ""  # storage with 'snippets' content, used for cloud-init user-data
 
 
 @dataclass
@@ -27,7 +29,7 @@ class Network:
 @dataclass
 class VM:
     vmid_range: tuple = (1000, 1999)
-    template_id: int = 9000
+    template_range: tuple = (9000, 9099)  # golden templates, one per distro
     default_distro: str = "ubuntu-24.04"
     default_cores: int = 1
     default_memory: int = 2048  # MiB
@@ -70,6 +72,10 @@ class Paths:
     def db(self) -> str:
         return str(Path(self.state_dir) / "lab.db")
 
+    @property
+    def image_dir(self) -> str:
+        return str(Path(self.state_dir) / "images")
+
 
 DEFAULT_PRESETS = {
     "small": {"cpu": 1, "ram": "2G", "disk": "32G"},
@@ -98,8 +104,11 @@ class Config:
             raise UsageError("vm.clone_mode must be 'full' or 'linked'")
         if self.archive.keep < 1:
             raise UsageError("archive.keep must be >= 1")
-        if self.vm.template_id and lo <= self.vm.template_id <= hi:
-            raise UsageError("vm.template_id must be outside vm.vmid_range")
+        tlo, thi = self.vm.template_range
+        if not (100 <= tlo <= thi):
+            raise UsageError(f"vm.template_range {self.vm.template_range} must satisfy 100 <= low <= high")
+        if lo <= thi and tlo <= hi:
+            raise UsageError("vm.template_range must not overlap vm.vmid_range")
         parse_size(self.vm.default_disk)
         for name, p in self.presets.items():
             missing = {"cpu", "ram", "disk"} - set(p)
@@ -137,8 +146,8 @@ def _build(cls, data: dict, section: str):
     unknown = set(data) - known
     if unknown:
         raise UsageError(f"unknown key(s) in [{section}]: {', '.join(sorted(unknown))}")
-    if section == "vm" and "vmid_range" in data:
-        data = {**data, "vmid_range": tuple(data["vmid_range"])}
+    if section == "vm":
+        data = {k: tuple(v) if k.endswith("_range") else v for k, v in data.items()}
     return cls(**data)
 
 
@@ -151,6 +160,52 @@ def from_dict(data: dict) -> Config:
     if "presets" in data:
         cfg.presets = {**cfg.presets, **data["presets"]}
     return cfg.validate()
+
+
+PROJECT_KEYS = frozenset({"distro", "cpu", "ram", "disk", "clone_mode", "profile"})
+
+
+def project_request(data: dict) -> dict:
+    """Validate settings that arrive with a project (repo lab.toml, profile, client, MCP).
+
+    Only PROJECT_KEYS are accepted. Storage, bridge, paths and the like are decided by the
+    host config alone (SPEC 4.1), so anything else is an error rather than silently ignored."""
+    bad = sorted(set(data) - PROJECT_KEYS)
+    if bad:
+        raise UsageError(
+            f"project settings may not set {', '.join(bad)}: disks, network and paths are "
+            f"decided by the host config (allowed: {', '.join(sorted(PROJECT_KEYS))})"
+        )
+    if data.get("clone_mode", "full") not in ("full", "linked"):
+        raise UsageError("clone_mode must be 'full' or 'linked'")
+    for k in ("ram", "disk"):
+        if k in data:
+            parse_size(data[k])
+    return dict(data)
+
+
+def _toml_value(v) -> str:
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return repr(v)
+    if isinstance(v, (list, tuple)):
+        return "[" + ", ".join(_toml_value(x) for x in v) + "]"
+    if isinstance(v, dict):
+        return "{ " + ", ".join(f"{k} = {_toml_value(x)}" for k, x in v.items()) + " }"
+    return json.dumps(str(v))  # JSON string escaping is valid TOML basic-string escaping
+
+
+def dumps(cfg: Config) -> str:
+    """Serialise to TOML (stdlib can only read it)."""
+    out = []
+    for section in _SECTIONS:
+        out.append(f"[{section}]")
+        out += [f"{k} = {_toml_value(v)}" for k, v in dataclasses.asdict(getattr(cfg, section)).items()]
+        out.append("")
+    out.append("[presets]")
+    out += [f"{name} = {_toml_value(p)}" for name, p in cfg.presets.items()]
+    return "\n".join(out) + "\n"
 
 
 def config_path() -> str:

@@ -81,6 +81,10 @@ oauth_file = "/etc/project-lab/ts-oauth"   # 0600 root; OAuth client mints per-V
 enabled = false
 ```
 
+### 4.1 Who decides storage (host-authoritative)
+
+The host config above is the **only** source for `fast_disk`, `archive_disk`, `snippet_disk`, the bridge, VMID/template ranges, paths and Tailscale settings. Nothing that travels with a project can set or override them: not a `lab.toml`/`setup.sh` in the project's repo (`--repo`, `--from`), not a profile, not client-side config, not CLI flags from the client, not MCP tool arguments. A project-level file may only request: `distro`, `cpu`, `ram`, `disk`, `clone_mode`, `profile`. Any other key (including anything named like a storage, bridge or path) is rejected with an error, not ignored. The host config is also root-owned and not writable by lab users; only `lab init` (admin, on the host) changes it. Rationale: users and AI sessions must never be able to steer VMs or archives onto a disk the admin did not choose.
+
 ## 5. Setup: `lab init` and `lab doctor`
 
 `lab init` is interactive, read-only until confirmed, and **never formats, partitions, or wipes**.
@@ -218,6 +222,7 @@ Flags: `--keep-active` (verify only, don't remove), `--no-boot-test` (discourage
 4. lab only touches VMs tagged `lab` within its VMID range; it ignores everything else on the host (Jellyfin etc.).
 5. The Tailscale key never appears in argv, shell history, templates, repos or archives.
 6. Template is immutable; updates go through `lab template update`.
+8. Storage placement is decided only by the host config (§4.1); project files, profiles, clients and MCP callers cannot choose disks.
 7. All operations are journaled and idempotent where possible; logs in `/var/log/project-lab/`.
 
 ## 15. Open questions
