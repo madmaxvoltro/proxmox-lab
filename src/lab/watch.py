@@ -9,6 +9,7 @@ shell on this PC (Claude Code with Bash) could run the same commands, so keep `l
 its auto-approved commands. The MCP tools themselves have no way to grant an approval."""
 
 import os
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -113,7 +114,6 @@ def show_popup(item: dict, alive, *, autoclose: float | None = None, selftest: s
     closing also denies), None = settled elsewhere or timed out. Raises PopupError if it cannot show,
     so the caller can fall back to the plain Tk window."""
     import json
-    import shutil
     import subprocess
     import tempfile
     exe = shutil.which("powershell") or shutil.which("pwsh")
@@ -129,17 +129,10 @@ def show_popup(item: dict, alive, *, autoclose: float | None = None, selftest: s
         proc = (popen or subprocess.Popen)([exe, "-NoProfile", "-NonInteractive", "-STA", "-ExecutionPolicy", "Bypass",
                                             "-File", str(script), "-Payload", fh.name],
                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, creationflags=flags)
-        last = monotonic()
-        while proc.poll() is None:
-            sleep(0.25)
-            if monotonic() - last >= poll:
-                last = monotonic()
-                if not alive():  # answered elsewhere, or expired: take the popup down
-                    proc.terminate()
-                    proc.wait()
-                    return None
+        code = _supervise(proc, alive, poll, sleep, monotonic)
+        if code is None:
+            return None
         out, err = proc.communicate()
-        code = proc.returncode
     except OSError as e:
         raise PopupError(str(e)) from e
     finally:
@@ -156,12 +149,107 @@ def show_popup(item: dict, alive, *, autoclose: float | None = None, selftest: s
     raise PopupError((err or out or f"popup exited with code {code}").strip()[-300:])
 
 
-def show_best(item: dict, alive) -> bool | None:
+def _supervise(proc, alive, poll: float, sleep, monotonic):
+    """Wait for a dialog process. Returns its exit code, or None if the approval was settled elsewhere
+    (or expired) while it was open, in which case the dialog is taken down."""
+    last = monotonic()
+    while proc.poll() is None:
+        sleep(0.25)
+        if monotonic() - last >= poll:
+            last = monotonic()
+            if not alive():
+                proc.terminate()
+                proc.wait()
+                return None
+    return proc.returncode
+
+
+def _dialog_text(item: dict) -> str:
+    d = describe(item)
+    minutes = max(1, int(item.get("expires_in", 0)) // 60)
+    return "\n".join([d["title"], "", d["subtitle"], "",
+                      f"Project: {item.get('project') or '-'}   Approval ID: {item.get('id') or '-'}   Expires in {minutes} min"])
+
+
+def macos_script(item: dict) -> str:
+    """AppleScript for the native macOS dialog: Return = Approve (the default button), Esc = Deny."""
+    d = describe(item)
+    text = _dialog_text(item).replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+    timeout = max(30, int(item.get("expires_in", 600)))
+    return (f'display dialog "{text}" with title "Lab: approval needed" buttons {{"Deny", "Approve"}} '
+            f'default button "Approve" cancel button "Deny" with icon {"caution" if d["danger"] else "note"} '
+            f"giving up after {timeout}")
+
+
+def show_macos(item: dict, alive, *, popen=None, poll: float = 3.0, sleep=time.sleep, monotonic=time.monotonic) -> bool | None:
+    import subprocess
+    if shutil.which("osascript") is None:
+        raise PopupError("osascript not found")
     try:
-        return show_popup(item, alive)
+        proc = (popen or subprocess.Popen)(["osascript", "-e", macos_script(item)], stdout=subprocess.PIPE,
+                                           stderr=subprocess.PIPE, text=True)
+        code = _supervise(proc, alive, poll, sleep, monotonic)
+        if code is None:
+            return None
+        out, err = proc.communicate()
+    except OSError as e:
+        raise PopupError(str(e)) from e
+    if code == 0:
+        if "gave up:true" in out:
+            return None
+        return "button returned:Approve" in out
+    if "-128" in err:  # the user pressed Esc / the Deny (cancel) button
+        return False
+    raise PopupError((err or out or f"osascript exited with {code}").strip()[-300:])
+
+
+def linux_command(item: dict) -> list:
+    """The first available native dialog (zenity, then kdialog), as an argv list."""
+    d = describe(item)
+    text = _dialog_text(item)
+    timeout = max(30, int(item.get("expires_in", 600)))
+    if shutil.which("zenity"):
+        return ["zenity", "--question", "--no-markup", "--title", "Lab: approval needed", "--text", text,
+                "--ok-label", "Approve", "--cancel-label", "Deny", "--width", "460", "--timeout", str(timeout),
+                "--icon-name", "dialog-warning" if d["danger"] else "dialog-password"]
+    if shutil.which("kdialog"):
+        return ["kdialog", "--title", "Lab: approval needed", "--yes-label", "Approve", "--no-label", "Deny", "--yesno", text]
+    raise PopupError("neither zenity nor kdialog is installed")
+
+
+def show_linux(item: dict, alive, *, popen=None, poll: float = 3.0, sleep=time.sleep, monotonic=time.monotonic) -> bool | None:
+    import subprocess
+    if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        raise PopupError("no graphical session (DISPLAY / WAYLAND_DISPLAY is not set)")
+    cmd = linux_command(item)
+    try:
+        proc = (popen or subprocess.Popen)(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        code = _supervise(proc, alive, poll, sleep, monotonic)
+        if code is None:
+            return None
+        out, err = proc.communicate()
+    except OSError as e:
+        raise PopupError(str(e)) from e
+    if code == 0:
+        return True
+    if code == 5 and cmd[0] == "zenity":  # zenity's --timeout elapsed
+        return None
+    if code in (1, 2):  # Deny, or Esc / window closed
+        return False
+    raise PopupError((err or out or f"{cmd[0]} exited with {code}").strip()[-300:])
+
+
+def show_best(item: dict, alive) -> bool | None:
+    """The best popup this machine can show: Windows card, macOS dialog, Linux zenity/kdialog, then Tk."""
+    native = {"win32": show_popup, "darwin": show_macos}.get(sys.platform, show_linux)
+    try:
+        return native(item, alive)
     except PopupError as e:
-        log(f"native popup unavailable ({e}); using the plain window")
+        log(f"native popup unavailable ({e}); trying the plain window")
+    try:
         return show_dialog(item, alive)
+    except Exception as e:  # Tk missing, or no display
+        raise PopupError(f"no way to show a window here ({e})") from e
 
 
 def show_dialog(item: dict, alive) -> bool | None:
@@ -236,7 +324,11 @@ def run(cfg: dict, *, show=show_best, poll: float = POLL, sleep=time.sleep, once
                 except (ClientError, OSError, ValueError):
                     return True
 
-            answer = show(item, alive)
+            try:
+                answer = show(item, alive)
+            except PopupError as e:
+                logger(f"{item['id']}: cannot show a popup ({e}); approve it with `lab approve {item['id']}`")
+                continue
             if answer is None:
                 logger(f"{item['id']}: settled elsewhere")
                 continue
@@ -251,19 +343,22 @@ def run(cfg: dict, *, show=show_best, poll: float = POLL, sleep=time.sleep, once
 
 
 # autostart ---------------------------------------------------------------------------------------------
+LAUNCH_LABEL = "io.github.madmaxvoltro.proxmox-lab.watch"
+
+
 def startup_dir() -> Path:
     return Path(os.environ.get("APPDATA", str(Path.home()))) / "Microsoft" / "Windows" / "Start Menu" / "Programs" / "Startup"
 
 
 def launcher_args() -> list:
-    """How to start the watcher again: the packaged lab.exe, or `python -m lab.entry`."""
+    """How to start the watcher again: the packaged executable, or `python -m lab.entry`."""
     if getattr(sys, "frozen", False):
         return [sys.executable, "watch"]
     return [sys.executable, "-m", "lab.entry", "watch"]
 
 
 def startup_script(python: str | None = None) -> str:
-    """A tiny script for the Startup folder that runs the watcher with no console window."""
+    """Windows: a tiny script for the Startup folder that runs the watcher with no console window."""
     if python is None and getattr(sys, "frozen", False):
         return f'CreateObject("WScript.Shell").Run """{sys.executable}"" watch", 0, False\r\n'
     py = Path(python or sys.executable)
@@ -272,15 +367,80 @@ def startup_script(python: str | None = None) -> str:
     return f'CreateObject("WScript.Shell").Run """{exe}"" -m lab.entry watch", 0, False\r\n'
 
 
-def install(folder: Path | None = None) -> Path:
-    target = (folder or startup_dir()) / STARTUP_FILE
+def launch_agent_plist(args: list | None = None, home: Path | None = None) -> str:
+    """macOS: a LaunchAgent that starts the watcher at login and keeps it running."""
+    from xml.sax.saxutils import escape
+    args = args or launcher_args()
+    items = "".join(f"\n    <string>{escape(str(a))}</string>" for a in args)
+    err = escape(str((home or Path.home()) / ".lab" / "watch.err"))
+    return (
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n'
+        '<plist version="1.0">\n<dict>\n'
+        f"  <key>Label</key>\n  <string>{LAUNCH_LABEL}</string>\n"
+        f"  <key>ProgramArguments</key>\n  <array>{items}\n  </array>\n"
+        "  <key>RunAtLoad</key>\n  <true/>\n"
+        "  <key>KeepAlive</key>\n  <true/>\n"
+        "  <key>LimitLoadToSessionType</key>\n  <string>Aqua</string>\n"
+        f"  <key>StandardErrorPath</key>\n  <string>{err}</string>\n"
+        "</dict>\n</plist>\n"
+    )
+
+
+def desktop_entry(args: list | None = None) -> str:
+    """Linux: an XDG autostart entry (works in GNOME, KDE, XFCE and friends)."""
+    def q(a) -> str:
+        s = str(a).replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")
+        return f'"{s}"'
+    return (
+        "[Desktop Entry]\nType=Application\nName=proxmox-lab approvals\n"
+        "Comment=Shows a window when an AI session needs your permission\n"
+        f"Exec={' '.join(q(a) for a in (args or launcher_args()))}\n"
+        "Terminal=false\nNoDisplay=true\nX-GNOME-Autostart-enabled=true\n"
+    )
+
+
+def _autostart_name(platform: str) -> str:
+    return {"win32": STARTUP_FILE, "darwin": f"{LAUNCH_LABEL}.plist"}.get(platform, "lab-watch.desktop")
+
+
+def autostart_path(platform: str | None = None, home: Path | None = None) -> Path:
+    platform, home = platform or sys.platform, home or Path.home()
+    if platform == "win32":
+        return startup_dir() / STARTUP_FILE
+    if platform == "darwin":
+        return home / "Library" / "LaunchAgents" / _autostart_name(platform)
+    return home / ".config" / "autostart" / _autostart_name(platform)
+
+
+def _autostart_text(platform: str) -> str:
+    return {"win32": startup_script, "darwin": launch_agent_plist}.get(platform, desktop_entry)()
+
+
+def _launchctl(*args: str) -> None:
+    import subprocess
+    try:
+        subprocess.run(["launchctl", *args], capture_output=True, timeout=15)
+    except (OSError, subprocess.SubprocessError):
+        pass  # it will simply load at the next login
+
+
+def install(folder: Path | None = None, platform: str | None = None) -> Path:
+    """Start the approval helper at login. `folder` is for tests: write there instead of the real place."""
+    platform = platform or sys.platform
+    target = folder / _autostart_name(platform) if folder else autostart_path(platform)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(startup_script(), encoding="utf-8", newline="")
+    target.write_text(_autostart_text(platform), encoding="utf-8", newline="")
+    if platform == "darwin" and not folder:
+        _launchctl("bootstrap", f"gui/{os.getuid()}", str(target))
     return target
 
 
-def uninstall(folder: Path | None = None) -> bool:
-    target = (folder or startup_dir()) / STARTUP_FILE
+def uninstall(folder: Path | None = None, platform: str | None = None) -> bool:
+    platform = platform or sys.platform
+    target = folder / _autostart_name(platform) if folder else autostart_path(platform)
+    if platform == "darwin" and not folder and target.exists():
+        _launchctl("bootout", f"gui/{os.getuid()}/{LAUNCH_LABEL}")
     if target.exists():
         target.unlink()
         return True
@@ -302,9 +462,12 @@ def main(cfg: dict, argv: list) -> int:
             return 2
         opt = lambda name, default=None: argv[argv.index(name) + 1] if name in argv else default
         auto = opt("--autoclose")
-        result = show_popup(SAMPLES[kind], lambda: True, autoclose=float(auto) if auto else None,
-                            selftest=opt("--selftest"), expanded="--expanded" in argv,
-                            backdrop=opt("--backdrop"), theme=opt("--theme"), monitor=opt("--monitor"))
+        if sys.platform == "win32":
+            result = show_popup(SAMPLES[kind], lambda: True, autoclose=float(auto) if auto else None,
+                                selftest=opt("--selftest"), expanded="--expanded" in argv,
+                                backdrop=opt("--backdrop"), theme=opt("--theme"), monitor=opt("--monitor"))
+        else:
+            result = (show_macos if sys.platform == "darwin" else show_linux)(SAMPLES[kind], lambda: True)
         print({True: "Approve", False: "Deny", None: "closed without an answer"}[result])
         return 0
     once = "--once" in argv

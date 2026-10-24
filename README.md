@@ -7,7 +7,7 @@
   <a href="https://github.com/madmaxvoltro/proxmox-lab/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/madmaxvoltro/proxmox-lab?display_name=tag&sort=semver"></a>
   <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-blue.svg"></a>
   <img alt="Proxmox VE 9" src="https://img.shields.io/badge/Proxmox%20VE-9-e57000">
-  <img alt="Windows x64 and ARM64" src="https://img.shields.io/badge/Windows-x64%20%7C%20ARM64-0078d4">
+  <img alt="Client for Windows, macOS and Linux" src="https://img.shields.io/badge/client-Windows%20%7C%20macOS%20%7C%20Linux-0078d4">
   <img alt="No dependencies" src="https://img.shields.io/badge/python%20deps-none-brightgreen">
 </p>
 
@@ -41,7 +41,7 @@ Spinning up a clean machine for a side project should take seconds, not an eveni
 
 ## Install
 
-You need a Proxmox VE host, [Tailscale](https://tailscale.com/download) on that host and on your PC, and a free Tailscale account. Two commands, in this order:
+You need a Proxmox VE host, [Tailscale](https://tailscale.com/download) on that host and on your computer, and a free Tailscale account. Two commands, in this order:
 
 ### 1. On the Proxmox host (as root)
 
@@ -70,21 +70,36 @@ It is safe to run again at any time: finished steps are detected and skipped. Up
 - Don't like piping to bash? Download [`install.sh`](install.sh), read it, run it.
 </details>
 
-### 2. On your Windows PC (no admin needed)
+### 2. On your computer (Windows, macOS or Linux; no admin or sudo needed)
+
+<table>
+<tr><th>Windows (PowerShell)</th></tr>
+<tr><td>
 
 ```powershell
 irm https://raw.githubusercontent.com/madmaxvoltro/proxmox-lab/main/install.ps1 | iex
 ```
 
-It downloads `lab.exe` for your CPU (x64 or ARM64), verifies the checksum, puts it in `%LOCALAPPDATA%\Programs\lab`, adds it to your PATH, and starts **`lab connect`**, which:
+</td></tr>
+<tr><th>macOS or Linux (Intel/AMD or ARM)</th></tr>
+<tr><td>
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/madmaxvoltro/proxmox-lab/main/install-client.sh | bash
+```
+
+</td></tr>
+</table>
+
+Each one downloads the `lab` program for your system and CPU (six builds: Windows, macOS and Linux, each x64 and ARM64), verifies its checksum, installs it (`%LOCALAPPDATA%\Programs\lab` on Windows, `~/.local/bin` elsewhere) and starts **`lab connect`**, which:
 
 1. tests the SSH connection to your host and explains any failure,
 2. adds `ssh lab-<project>` shortcuts to your SSH config (VS Code Remote-SSH works),
 3. adds the MCP server to **Claude Desktop** for you (backing up its config first),
 4. registers it with **Claude Code** if installed,
-5. starts the **approval popup** helper and makes it start at login.
+5. starts the **approval popup** helper and makes it start at login (a Startup entry on Windows, a LaunchAgent on macOS, an autostart entry on Linux).
 
-Remove it later with `lab uninstall`.
+Remove it later with `lab uninstall`. Check that a computer is ready any time with `lab check`.
 
 ## Use it
 
@@ -106,7 +121,7 @@ Size presets are `small` (1 vCPU / 2 GB / 32 GB), `medium` (4 / 8 GB / 48 GB) an
 
 ## Claude (MCP)
 
-`lab connect` does this for you. If you prefer to do it by hand, add this to Claude Desktop's config (**Settings → Developer → Edit Config**), using your host's Tailscale name:
+`lab connect` does this for you. If you prefer to do it by hand, add this to Claude Desktop's config (**Settings → Developer → Edit Config**; on macOS the file is `~/Library/Application Support/Claude/claude_desktop_config.json`), using your host's Tailscale name. On macOS and Linux use `"command": "ssh"`:
 
 ```json
 {
@@ -135,7 +150,7 @@ The server is started over your own SSH connection (`ssh host lab mcp`), so noth
 
 ### The approval popup
 
-When an AI session needs permission, the monitor you are working on blurs and a card appears. **Return approves, Esc denies**, and *More info* shows exactly what is being asked.
+When an AI session needs permission, a window appears. On **Windows** the monitor you are working on blurs and a card shows up: **Return approves, Esc denies**, and *More info* shows exactly what is being asked. **macOS** shows its native dialog (Return approves, Esc denies) and **Linux** uses `zenity` or `kdialog` (install one if you have neither); both show the same details but without the blur.
 
 <table>
 <tr>
@@ -203,11 +218,11 @@ The full design is in [docs/SPEC.md](docs/SPEC.md) and the feature list in [docs
 </details>
 
 <details>
-<summary><b>On your PC</b> (<code>lab …</code>, forwards everything else to the host)</summary>
+<summary><b>On your computer</b> (<code>lab …</code>, forwards everything else to the host)</summary>
 
 | Command | |
 |---|---|
-| `connect [HOST]` | Guided wiring of this PC: SSH, Claude Desktop, Claude Code, popups |
+| `connect [HOST]` | Guided wiring of this computer: SSH, Claude Desktop, Claude Code, popups |
 | `ssh NAME [--via-host]` | Open a project over Tailscale SSH |
 | `ssh-config` | Write `lab-<project>` shortcuts into `~/.ssh/config` |
 | `mcp-config` | Print the MCP config for Claude |
@@ -269,9 +284,9 @@ The helper isn't running on your PC. Start it with `lab watch` (or let `lab conn
 </details>
 
 <details>
-<summary><b>Windows Defender / SmartScreen flags <code>lab.exe</code></b></summary>
+<summary><b>Windows Defender, SmartScreen or macOS Gatekeeper flags the program</b></summary>
 
-The binary is built by GitHub Actions from this repository with PyInstaller and is not code-signed, which some antivirus products dislike. You can verify the checksum in the release's `SHA256SUMS`, or install from source: `pip install .` gives the same command with no binary.
+The binaries are built by GitHub Actions from this repository with PyInstaller and are not code-signed, which some antivirus products and macOS Gatekeeper dislike. The installers download with `curl` / PowerShell, which avoids the browser quarantine flag. If you downloaded a binary from the Releases page with a browser on macOS, run `xattr -d com.apple.quarantine ~/Downloads/lab-macos-arm64` once. You can verify any file against the release's `SHA256SUMS`, or install from source: `pip install .` gives the same command with no binary.
 </details>
 
 <details>
@@ -284,7 +299,7 @@ On the **tailnet**, no: `tag:lab` has no grants. On your **LAN**, that depends o
 
 This is **v0.x**. It has been used end to end on one Proxmox VE 9.2 host (create, stop/start, archive, restore, delete, the MCP server and the popup), and the code has a large automated test suite, but treat it as beta software that creates and destroys VMs on your server. Keep real backups of anything you care about.
 
-Known gaps: Proxmox VE 8 is not tested; the Rocky/Alma images are untested; the setup needs a Windows PC for the client side (the host side works from any machine with SSH); non-admin users need an SSH login on the host that can run `lab` (a restricted account for them is not built yet); snapshots, clone and profiles from the [spec](docs/SPEC.md) are not implemented. Not affiliated with Proxmox, Tailscale or Anthropic.
+Known gaps: Proxmox VE 8 is not tested; the Rocky/Alma images are untested; the **Windows** client is the one used day to day, while the macOS and Linux builds are compiled and unit-tested on GitHub's runners but have not been run on real machines yet (reports welcome); non-admin users need an SSH login on the host that can run `lab` (a restricted account for them is not built yet); snapshots, clone and profiles from the [spec](docs/SPEC.md) are not implemented. Not affiliated with Proxmox, Tailscale or Anthropic.
 
 ## Development
 

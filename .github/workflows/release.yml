@@ -1,7 +1,7 @@
 name: Release
 
-# Push a tag like v0.1.0 to publish a release: tests run, lab.exe is built for Windows x64 and ARM64,
-# and everything is attached to the GitHub release together with SHA256SUMS.
+# Push a tag like v0.2.0 to publish a release: tests run, the `lab` client is built for Windows, macOS and
+# Linux (x64 and ARM64 each) and attached to the GitHub release together with SHA256SUMS.
 on:
   push:
     tags: ["v*"]
@@ -25,56 +25,43 @@ jobs:
           grep -q "__version__ = \"${version}\"" src/lab/__init__.py || { echo "src/lab/__init__.py version is not ${version}"; exit 1; }
       - run: python -m unittest discover -s tests -t .
 
-  windows-x64:
-    name: lab.exe (Windows x64)
+  client:
+    name: lab (${{ matrix.name }})
     needs: verify
-    runs-on: windows-latest
+    runs-on: ${{ matrix.runner }}
+    # builds on runners that may be scarce (ARM, Intel Mac) never block the release
+    continue-on-error: ${{ matrix.optional }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: "Windows x64",   runner: windows-latest,    asset: lab-windows-x64,   ext: ".exe", sep: ";", optional: false }
+          - { name: "Windows ARM64", runner: windows-11-arm,    asset: lab-windows-arm64, ext: ".exe", sep: ";", optional: true }
+          # built on 22.04 so the binary also runs on older distributions (it needs the build system's glibc or newer)
+          - { name: "Linux x64",     runner: ubuntu-22.04,      asset: lab-linux-x64,     ext: "",     sep: ":", optional: false }
+          - { name: "Linux ARM64",   runner: ubuntu-22.04-arm,  asset: lab-linux-arm64,   ext: "",     sep: ":", optional: true }
+          - { name: "macOS ARM64",   runner: macos-latest,      asset: lab-macos-arm64,   ext: "",     sep: ":", optional: false }
+          - { name: "macOS x64",     runner: macos-15-intel,    asset: lab-macos-x64,     ext: "",     sep: ":", optional: true }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - name: Build
-        shell: pwsh
+        shell: bash
         run: |
           python -m pip install --upgrade pip pyinstaller
-          pyinstaller --onefile --noconfirm --clean --name lab-windows-x64 --paths src `
-            --add-data "src/lab/data;lab/data" --collect-submodules lab packaging/lab_exe.py
+          pyinstaller --onefile --noconfirm --clean --name "${{ matrix.asset }}" --paths src \
+            --add-data "src/lab/data${{ matrix.sep }}lab/data" --collect-submodules lab packaging/lab_exe.py
       - name: Smoke test the binary
-        shell: pwsh
+        shell: bash
         run: |
-          ./dist/lab-windows-x64.exe version
-          ./dist/lab-windows-x64.exe check
+          "./dist/${{ matrix.asset }}${{ matrix.ext }}" version
+          "./dist/${{ matrix.asset }}${{ matrix.ext }}" check
       - uses: actions/upload-artifact@v4
         with:
-          name: lab-windows-x64
-          path: dist/lab-windows-x64.exe
-
-  windows-arm64:
-    name: lab.exe (Windows ARM64)
-    needs: verify
-    runs-on: windows-11-arm
-    continue-on-error: true   # the release still goes out if this runner is unavailable
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - name: Build
-        shell: pwsh
-        run: |
-          python -m pip install --upgrade pip pyinstaller
-          pyinstaller --onefile --noconfirm --clean --name lab-windows-arm64 --paths src `
-            --add-data "src/lab/data;lab/data" --collect-submodules lab packaging/lab_exe.py
-      - name: Smoke test the binary
-        shell: pwsh
-        run: |
-          ./dist/lab-windows-arm64.exe version
-          ./dist/lab-windows-arm64.exe check
-      - uses: actions/upload-artifact@v4
-        with:
-          name: lab-windows-arm64
-          path: dist/lab-windows-arm64.exe
+          name: ${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}${{ matrix.ext }}
 
   package:
     name: host package
@@ -91,8 +78,8 @@ jobs:
 
   publish:
     name: publish the release
-    needs: [windows-x64, windows-arm64, package]
-    if: ${{ !cancelled() && needs.package.result == 'success' && needs['windows-x64'].result == 'success' }}
+    needs: [client, package]
+    if: ${{ !cancelled() && needs.package.result == 'success' && needs.client.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -102,9 +89,9 @@ jobs:
           merge-multiple: true
       - name: Checksums
         run: |
-          cp install.sh install.ps1 assets/
+          cp install.sh install.ps1 install-client.sh assets/
           cd assets
-          sha256sum project-lab-*.tar.gz lab-windows-*.exe > SHA256SUMS
+          sha256sum project-lab-*.tar.gz lab-windows-* lab-linux-* lab-macos-* > SHA256SUMS
           cat SHA256SUMS
       - name: Create the release
         env:
@@ -123,6 +110,11 @@ jobs:
           irm https://raw.githubusercontent.com/${{ github.repository }}/main/install.ps1 | iex
           ```
 
-          Files are checked against `SHA256SUMS` by both installers. `lab.exe` is not code-signed.
+          **macOS or Linux computer**:
+          ```bash
+          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install-client.sh | bash
+          ```
+
+          Every installer checks the download against `SHA256SUMS`. The programs are not code-signed.
           EOF
           gh release create "${GITHUB_REF_NAME}" assets/* --title "${GITHUB_REF_NAME}" --generate-notes --notes-file notes.md

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.0
+
+- The client now exists for **macOS and Linux** (x64 and ARM64) as well as Windows, with `install-client.sh`.
+  Approval popups use the native dialog on macOS and zenity/kdialog on Linux; the blurred card stays Windows-only.
+  The login launcher is a LaunchAgent on macOS and an XDG autostart entry on Linux.
+
 ## 0.1.1 (first release)
 
 The `v0.1.0` tag was never released: its Windows build failed a smoke test, which is fixed here.

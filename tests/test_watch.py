@@ -347,11 +347,11 @@ class StartupTest(unittest.TestCase):
 
     def test_install_and_uninstall(self):
         with tempfile.TemporaryDirectory() as d:
-            path = watch.install(Path(d) / "Startup")
+            path = watch.install(Path(d) / "Startup", platform="win32")
             self.assertTrue(path.exists())
             self.assertIn("lab.entry watch", path.read_text())
-            self.assertTrue(watch.uninstall(Path(d) / "Startup"))
-            self.assertFalse(watch.uninstall(Path(d) / "Startup"))
+            self.assertTrue(watch.uninstall(Path(d) / "Startup", platform="win32"))
+            self.assertFalse(watch.uninstall(Path(d) / "Startup", platform="win32"))
 
 
 class ClientTerminalTest(unittest.TestCase):

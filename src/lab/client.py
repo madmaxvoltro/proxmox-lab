@@ -194,13 +194,26 @@ def cmd_delete(cfg, argv):
     return run_remote(cfg, ["delete", *argv]).returncode
 
 
+def popup_row(watch) -> tuple:
+    """How approvals will be shown on this computer (the blurred card needs the bundled script on Windows)."""
+    if sys.platform == "win32":
+        ok = watch.SCRIPT.is_file()
+        return ("approval popup", "bundled" if ok else "MISSING", ok, True)
+    if sys.platform == "darwin":
+        found = shutil.which("osascript")
+        return ("approval popup", "native macOS dialog" if found else "osascript not found", bool(found), False)
+    tool = shutil.which("zenity") or shutil.which("kdialog")
+    return ("approval popup", tool or "install zenity or kdialog (otherwise approve with `lab approve ID` on the host)",
+            bool(tool), False)
+
+
 def cmd_check() -> int:
     """Is this PC ready? Verifies what lab.exe ships with and what it needs from Windows. Exit code 0
     unless something bundled is missing (a missing ssh or Tailscale is a warning, not a failure)."""
     from . import __version__, distros, watch
     rows = [
         ("lab", f"{__version__}" + (" (packaged exe)" if getattr(sys, "frozen", False) else ""), True, True),
-        ("popup script", "bundled" if watch.SCRIPT.is_file() else "MISSING", watch.SCRIPT.is_file(), True),
+        popup_row(watch),
         ("distro catalogue", f"{len(distros.load(override=None))} distros", True, True),
         ("OpenSSH client", shutil.which("ssh") or "not found: install it from Settings > Optional features", bool(shutil.which("ssh")), False),
         ("Tailscale", shutil.which("tailscale") or "not found: https://tailscale.com/download", bool(shutil.which("tailscale")), False),
@@ -224,13 +237,21 @@ def remove_from_path(value: str, folder: str) -> str:
 
 
 def cmd_uninstall() -> int:
-    """Remove the installed lab.exe, its PATH entry and its login launcher. Settings are left alone."""
+    """Remove the installed program and its login launcher. Settings are left alone."""
     if not getattr(sys, "frozen", False):
         print("This copy was installed with pip: run `python -m pip uninstall project-lab`.")
         return 0
-    import winreg
     from . import watch
     exe = Path(sys.executable)
+    if sys.platform != "win32":
+        if input(f"Remove {exe} and the approval helper's login launcher? [y/N] ").strip().lower() not in ("y", "yes"):
+            return 1
+        watch.uninstall()
+        exe.unlink(missing_ok=True)
+        print("Removed. Left in place: ~/.lab (settings), the lab block in ~/.ssh/config, and the \"lab\" entry in\n"
+              "Claude Desktop's config. Delete them by hand if you want those gone too.")
+        return 0
+    import winreg
     if input(f"Remove {exe.parent} and the approval helper's login launcher? [y/N] ").strip().lower() not in ("y", "yes"):
         return 1
     watch.uninstall()

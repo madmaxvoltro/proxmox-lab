@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest, macos-latest]
         python: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
@@ -34,6 +34,19 @@ jobs:
         with:
           python-version: "3.12"
       - name: ShellCheck
-        run: shellcheck install.sh tests/installer_smoke.sh
-      - name: Install from a local fake release (checksum, upgrade, uninstall, refusals)
+        run: shellcheck install.sh install-client.sh tests/installer_smoke.sh tests/client_installer_smoke.sh
+      - name: Host installer against a local fake release (checksum, upgrade, uninstall, refusals)
         run: bash tests/installer_smoke.sh
+      - name: Client installer against a local fake release (all four unix builds, checksum, upgrade, uninstall)
+        run: bash tests/client_installer_smoke.sh
+
+  client-installer-macos:
+    name: client installer (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Client installer on macOS (bash 3.2, shasum, BSD tools)
+        run: bash tests/client_installer_smoke.sh

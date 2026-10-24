@@ -27,8 +27,15 @@ def mcp_entry(cfg: dict) -> dict:
     return {"command": ssh_command(), "args": client.mcp_server_entry(cfg)["args"]}
 
 
-def find_claude_desktop_config(env=os.environ) -> Path | None:
-    """Where Claude Desktop keeps its config: the classic install, or the Store (MSIX) one."""
+def find_claude_desktop_config(env=os.environ, platform: str | None = None, home: Path | None = None) -> Path | None:
+    """Where Claude Desktop keeps its config: Windows (classic or Store/MSIX install), macOS, or Linux."""
+    platform, home = platform or sys.platform, home or Path.home()
+    if platform == "darwin":
+        c = home / "Library" / "Application Support" / "Claude" / "claude_desktop_config.json"
+        return c if c.parent.exists() else None
+    if platform != "win32":
+        c = home / ".config" / "Claude" / "claude_desktop_config.json"  # unofficial builds; only if already there
+        return c if c.parent.exists() else None
     appdata, local = env.get("APPDATA"), env.get("LOCALAPPDATA")
     candidates = []
     if appdata:
@@ -149,12 +156,15 @@ def run(argv: list, *, ask=input, say=print, env=os.environ, load=client.load_co
         say(json.dumps({"mcpServers": {"lab": entry}}, indent=2))
 
     say("\n[5/5] Approval popups")
-    say("  When an AI session needs permission, a window appears here with Approve / Deny.")
+    say("  When an AI session needs permission, a window appears here with Approve / Deny"
+        + (" (a blurred card)." if sys.platform == "win32" else " (a native dialog)."))
     if yes("Run the approval helper automatically at login and start it now?"):
         print_path = watch.install()
-        subprocess.Popen(watch.launcher_args(), creationflags=getattr(subprocess, "DETACHED_PROCESS", 0)
-                         | getattr(subprocess, "CREATE_NO_WINDOW", 0), close_fds=True,
-                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if sys.platform != "darwin":  # on macOS the LaunchAgent has already started it
+            subprocess.Popen(watch.launcher_args(), close_fds=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                             stderr=subprocess.DEVNULL,
+                             **({"creationflags": subprocess.DETACHED_PROCESS | subprocess.CREATE_NO_WINDOW}
+                                if sys.platform == "win32" else {"start_new_session": True}))
         say(f"  installed ({print_path.name}) and running.")
 
     say("\nDone. Try:  lab list     or ask Claude: \"list my lab projects\"")

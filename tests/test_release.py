@@ -149,11 +149,11 @@ class SmallPiecesTest(unittest.TestCase):
         with mock.patch("sys.stdout", out), mock.patch.object(client, "load_config", side_effect=client.ClientError("x")):
             self.assertEqual(client.main(["check"]), 0)
         text = out.getvalue()
-        self.assertIn("popup script", text)
-        self.assertIn("bundled", text)
+        self.assertIn("approval popup", text)
         self.assertIn("run `lab connect`", text)  # not set up is a hint, not a failure
-        with mock.patch.object(watch, "SCRIPT", Path("nope.ps1")), mock.patch("sys.stdout", __import__("io").StringIO()):
-            self.assertEqual(client.main(["check"]), 1)  # a missing bundled file is a failure
+        with mock.patch.object(sys, "platform", "win32"), mock.patch.object(watch, "SCRIPT", Path("nope.ps1")), \
+                mock.patch("sys.stdout", __import__("io").StringIO()):
+            self.assertEqual(client.main(["check"]), 1)  # a missing bundled popup file is a failure on Windows
 
     def test_remove_from_path(self):
         self.assertEqual(client.remove_from_path(r"C:\a;C:\Users\x\lab\;C:\b", r"C:\USERS\x\lab"), r"C:\a;C:\b")
@@ -210,14 +210,15 @@ class ClaudeConfigTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             appdata, local = Path(d) / "Roaming", Path(d) / "Local"
             env = {"APPDATA": str(appdata), "LOCALAPPDATA": str(local)}
-            self.assertIsNone(connect.find_claude_desktop_config(env))
+            find = lambda e: connect.find_claude_desktop_config(e, platform="win32")
+            self.assertIsNone(find(env))
             store = local / "Packages" / "Claude_abc123" / "LocalCache" / "Roaming" / "Claude"
             store.mkdir(parents=True)
-            self.assertEqual(connect.find_claude_desktop_config(env), store / "claude_desktop_config.json")  # folder only
+            self.assertEqual(find(env), store / "claude_desktop_config.json")  # folder only
             (store / "claude_desktop_config.json").write_text("{}")
             (appdata / "Claude").mkdir(parents=True)
             (appdata / "Claude" / "claude_desktop_config.json").write_text("{}")
-            self.assertEqual(connect.find_claude_desktop_config(env), appdata / "Claude" / "claude_desktop_config.json")
+            self.assertEqual(find(env), appdata / "Claude" / "claude_desktop_config.json")
 
     def test_failures_are_explained_in_plain_words(self):
         self.assertIn("Tailscale", connect.explain_failure("ssh: Could not resolve hostname pve"))
@@ -250,6 +251,7 @@ class ConnectWizardTest(unittest.TestCase):
                  mock.patch.object(client, "cmd_ssh_config") as sshcfg, \
                  mock.patch.object(connect.shutil, "which", return_value=None), \
                  mock.patch.object(connect.watch, "install", return_value=Path("lab-approvals.vbs")), \
+                 mock.patch.object(connect.sys, "platform", "win32"), \
                  mock.patch.object(connect.subprocess, "Popen") as popen:
                 rc = connect.run([], ask=ask, say=said.append, env={"APPDATA": str(Path(d) / "Roaming")},
                                  load=lambda: {}, save=lambda h, u: saved.update(host=h, user=u))
@@ -283,11 +285,11 @@ class RepositoryFilesTest(unittest.TestCase):
         return (ROOT / rel).read_bytes()
 
     def test_scripts_have_no_byte_order_mark_and_unix_line_endings(self):
-        for rel in ("install.sh", "tests/installer_smoke.sh", "pyproject.toml", "install.ps1",
-                    "src/lab/data/approve_popup.ps1"):
+        for rel in ("install.sh", "install-client.sh", "tests/installer_smoke.sh", "tests/client_installer_smoke.sh",
+                    "pyproject.toml", "install.ps1", "src/lab/data/approve_popup.ps1"):
             data = self.read(rel)
             self.assertFalse(data.startswith(b"\xef\xbb\xbf"), f"{rel} starts with a BOM")
-        for rel in ("install.sh", "tests/installer_smoke.sh"):
+        for rel in ("install.sh", "install-client.sh", "tests/installer_smoke.sh", "tests/client_installer_smoke.sh"):
             data = self.read(rel)
             self.assertTrue(data.startswith(b"#!/usr/bin/env bash\n"), rel)
             self.assertNotIn(b"\r\n", data, f"{rel} has Windows line endings")
@@ -309,7 +311,8 @@ class RepositoryFilesTest(unittest.TestCase):
         readme = self.read("README.md").decode()
         self.assertIn("raw.githubusercontent.com/madmaxvoltro/proxmox-lab/main/install.sh | bash", readme)
         self.assertIn("raw.githubusercontent.com/madmaxvoltro/proxmox-lab/main/install.ps1 | iex", readme)
-        for rel in ("install.sh", "install.ps1", "LICENSE", "CONTRIBUTING.md", "SECURITY.md", "docs/SPEC.md"):
+        self.assertIn("raw.githubusercontent.com/madmaxvoltro/proxmox-lab/main/install-client.sh | bash", readme)
+        for rel in ("install.sh", "install.ps1", "install-client.sh", "LICENSE", "CONTRIBUTING.md", "SECURITY.md", "docs/SPEC.md"):
             self.assertTrue((ROOT / rel).is_file(), rel)
 
     def test_installers_agree_with_the_release_workflow_on_file_names(self):
@@ -322,6 +325,19 @@ class RepositoryFilesTest(unittest.TestCase):
         self.assertIn("lab-windows-$arch.exe", ps)
         self.assertIn("SHA256SUMS", workflow + sh + ps)
         self.assertIn("--add-data", workflow)  # the popup script and distro data are bundled into lab.exe
+
+    def test_all_six_client_builds_are_built_published_and_installable(self):
+        workflow = self.read(".github/workflows/release.yml").decode()
+        client_sh = self.read("install-client.sh").decode()
+        assets = ["lab-windows-x64", "lab-windows-arm64", "lab-linux-x64", "lab-linux-arm64", "lab-macos-x64", "lab-macos-arm64"]
+        for asset in assets:
+            self.assertIn(f"asset: {asset}", workflow, asset)
+        self.assertIn('ASSET="lab-${OS}-${ARCH}"', client_sh)
+        for combo in ("OS=linux", "OS=macos", "ARCH=x64", "ARCH=arm64"):
+            self.assertIn(combo, client_sh)
+        self.assertIn("install-client.sh", workflow)  # attached to the release
+        self.assertIn("lab-linux-* lab-macos-*", workflow)  # and covered by SHA256SUMS
+        self.assertIn("ubuntu-22.04", workflow)  # old glibc, so the Linux binary runs on older distributions
 
     def test_no_personal_data_in_tracked_files(self):
         """Generic patterns, so this file itself contains nothing private: no personal e-mail addresses,
