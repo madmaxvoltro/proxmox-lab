@@ -8,7 +8,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 WORK="$(mktemp -d)"
 PORT="${PORT:-18765}"
 SERVER_PID=""
-cleanup() { [ -n "$SERVER_PID" ] && kill "$SERVER_PID" 2>/dev/null || true; rm -rf "$WORK"; }
+cleanup() { if [ -n "$SERVER_PID" ]; then kill "$SERVER_PID" 2>/dev/null || true; fi; rm -rf "$WORK"; }
 trap cleanup EXIT
 
 pass() { printf 'ok   %s\n' "$1"; }
@@ -41,7 +41,7 @@ pass "install, checksum, command runs"
 # 2. an upgrade keeps the older release for rollback and moves the link
 make_release v9.9.2
 bash "$HERE/install.sh" --no-setup >/dev/null 2>&1 || fail "upgrade"
-[ -d "$WORK/opt/releases/v9.9.1" ] && [ -d "$WORK/opt/releases/v9.9.2" ] || fail "releases not kept"
+if [ ! -d "$WORK/opt/releases/v9.9.1" ] || [ ! -d "$WORK/opt/releases/v9.9.2" ]; then fail "releases not kept"; fi
 pass "upgrade keeps the previous release"
 
 # 3. a corrupted download is refused and nothing changes
@@ -69,7 +69,7 @@ pass "foreign lab left alone"
 rm -f "$WORK/bin/lab"
 bash "$HERE/install.sh" --no-setup >/dev/null 2>&1 || fail "reinstall"
 bash "$HERE/install.sh" --uninstall >/dev/null 2>&1 || fail "uninstall"
-[ ! -e "$WORK/opt" ] && [ ! -e "$WORK/bin/lab" ] || fail "uninstall left files behind"
+if [ -e "$WORK/opt" ] || [ -e "$WORK/bin/lab" ]; then fail "uninstall left files behind"; fi
 pass "uninstall"
 
 # 6. outside Proxmox (and without the test override) it refuses with a clear message
