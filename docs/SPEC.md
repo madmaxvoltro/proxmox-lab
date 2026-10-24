@@ -74,8 +74,9 @@ max_running_vms = 6          # creates beyond these need human approval
 [archive]
 keep         = 1
 [tailscale]
-tag          = "tag:project-lab"
-auth_key_file = "/etc/project-lab/ts-authkey"   # 0600 root
+base_tag     = "tag:server"
+owner_tag_prefix = "tag:user-"
+oauth_file = "/etc/project-lab/ts-oauth"   # 0600 root; OAuth client mints per-VM keys (Q10)
 [idle]
 enabled = false
 ```
@@ -171,7 +172,7 @@ Decisions: ephemeral, tagged (`tag:server` + owner tag `tag:user-<owner>`), pre-
 
 **Important caveat** — ephemeral nodes are removed by Tailscale after being offline ~30–60 min, so a stopped VM loses its tailnet identity anyway. Plan: treat `stop` as `logout` too (clean and deterministic), and re-enrol on `start`. Hostname collisions (`lab-x-1`) are avoided by logging out cleanly first. Consequence: the tailnet IP may change across stop/start; always use the MagicDNS name.
 
-**Key handling**: the key lives only in `/etc/project-lab/ts-authkey` (0600 root) on the host. Enrolment is: wait for guest agent → `qm guest exec <vmid> --pass-stdin -- tailscale up --auth-key=file:/dev/stdin --ssh --hostname lab-NAME`, with the key piped on stdin. It never goes in argv, cloud-init user-data, the seed image, the template, the VM filesystem, logs or backups. Cloud-init still handles hostname, user, resize, profile packages and setup. The same path is used for create, start and restore. Requires the guest agent in every template (it is).
+**Key handling**: the OAuth client credentials live only in `/etc/project-lab/ts-oauth` (0600 root) on the host; a fresh single-use key is minted per enrolment (Q10). Enrolment is: mint key → wait for guest agent → `qm guest exec <vmid> --pass-stdin -- tailscale up --auth-key=file:/dev/stdin --ssh --hostname lab-NAME`, with the key piped on stdin. It never goes in argv, cloud-init user-data, the seed image, the template, the VM filesystem, logs or backups. Cloud-init still handles hostname, user, resize, profile packages and setup. The same path is used for create, start and restore. Requires the guest agent in every template (it is).
 
 ## 10. Archive (one command, verified, auto-rollback)
 
@@ -230,9 +231,9 @@ Flags: `--keep-active` (verify only, don't remove), `--no-boot-test` (discourage
 - ~~Q7~~ **decided**: MCP elicitation first, `lab approve ID` terminal fallback.
 - ~~Q8~~ **decided**: guest agent for one-shot commands and file transfer, Tailscale SSH for interactive/long-running.
 - ~~Q9~~ **decided** (my call): per-family package maps cover only base packages and the docker/go/rust/uv modules in v1.
-- **Q10 Per-owner Tailscale keys.** An auth key's tags are fixed when the key is created, so one shared key cannot give each VM a different owner tag. Options: (a) one reusable key per user, created by hand and stored in `/etc/project-lab/keys/<user>`; (b) a Tailscale OAuth client that mints a single-use, short-expiry ephemeral key per VM with the right tags. Recommend (b): better security (a leaked key is useless), no per-user key chores; cost: a more powerful credential on the host (`auth_keys` write scope, restricted to the tags).
-- **Q11 Admins and the first user.** Who is the initial admin (your tailnet login), and how are new users added (`lab user add <tailnet-login> <name>` by an admin)?
-- **Q12 Archive ownership.** Archives are owned by the project's owner; admins can restore/delete anyone's. Confirm that users cannot see each other's archive existence.
+- ~~Q10~~ **decided**: a Tailscale OAuth client (scope `auth_keys` write, restricted to `tag:server` and `tag:user-*`) mints a single-use, short-expiry, ephemeral, pre-approved key per VM with `tag:server` + `tag:user-<owner>`. Credentials in `/etc/project-lab/ts-oauth` (0600 root); the minted key is piped via guest-agent stdin and never stored. This replaces the static `ts-authkey` file in §4/§9. Enrolment fails closed if minting fails.
+- ~~Q11~~ **decided**: `lab init` makes the person running it the first admin (tailnet login via `tailscale whois`); `lab user add <tailnet-login> <name>` (admin) adds others.
+- ~~Q12~~ **decided**: users see only their own projects and archives; admins see all. A name clash with another user's project returns a generic "name unavailable" without revealing the owner.
 
 ## 16. MCP server (`lab mcp`)
 
