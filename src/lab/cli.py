@@ -368,6 +368,12 @@ def main(argv=None) -> int:
             ctx.rep.finish(False)  # close the live progress display before the error text
         print(f"error: {e}", file=sys.stderr)
         return e.exit_code
+    except KeyboardInterrupt:
+        if ctx:
+            ctx.rep.finish(False)
+        print("interrupted; operations that were in progress rolled themselves back "
+              "(run `lab doctor` to double-check)", file=sys.stderr)
+        return 130
     finally:
         if ctx:
             ctx.rep.finish(ok)

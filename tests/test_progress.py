@@ -446,6 +446,24 @@ class WiringTest(Base):
         self.assertIn("FAILED: Trial restore", self.out.getvalue())
 
 
+class InterruptTest(unittest.TestCase):
+    def test_ctrl_c_exits_cleanly_without_a_traceback(self):
+        from lab import cli
+        real = cli._run
+        cli._run = lambda ctx, args: (_ for _ in ()).throw(KeyboardInterrupt())
+        err = io.StringIO()
+        old = sys.stderr
+        sys.stderr = err
+        try:
+            rc = cli.main(["--config", "does-not-exist.toml", "version"])
+        finally:
+            sys.stderr = old
+            cli._run = real
+        self.assertEqual(rc, 130)
+        self.assertIn("interrupted", err.getvalue())
+        self.assertNotIn("Traceback", err.getvalue())
+
+
 class TemplateWiringTest(unittest.TestCase):
     def test_template_build_reports_every_stage_with_download_progress(self):
         fake, fio = FakeProxmox(), make_io()
