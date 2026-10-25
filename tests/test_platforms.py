@@ -231,6 +231,14 @@ class ClaudeDesktopLocationTest(unittest.TestCase):
                              home / ".config" / "Claude" / "claude_desktop_config.json")
 
 
+class NoFlashingWindowsTest(unittest.TestCase):
+    def test_captured_ssh_calls_never_open_a_console_window(self):
+        with mock.patch.object(client.subprocess, "CREATE_NO_WINDOW", 0x08000000, create=True), \
+                mock.patch.object(client.subprocess, "run") as run:
+            client.run_remote({"host": "pve", "ssh_user": "root"}, ["approvals", "--pending"], capture=True)
+        self.assertEqual(run.call_args.kwargs["creationflags"], 0x08000000)
+
+
 class CheckRowTest(unittest.TestCase):
     def row(self, plat, found):
         with mock.patch.object(sys, "platform", plat), mock.patch.object(client.shutil, "which", self.which(found)):

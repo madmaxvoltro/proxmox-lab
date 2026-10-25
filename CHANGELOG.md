@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.1
+
+- Fixed: on Windows, right after `lab connect` the background approval helper made a terminal window pop up every few
+  seconds (it was started with no console, so each of its ssh checks opened one). It now has a hidden console. After a
+  restart it was already fine.
+
 ## 0.4.0
 
 - New setting `[mcp] root_without_approval = true` (default `false`): the AI can run commands and read/write files as root

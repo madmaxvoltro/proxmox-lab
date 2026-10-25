@@ -264,6 +264,11 @@ class ConnectWizardTest(unittest.TestCase):
             self.assertEqual(data["mcpServers"]["lab"]["args"][-3:], ["root@pve.example.ts.net".replace("root@", "root@"), "lab", "mcp"][-3:])
             sshcfg.assert_called_once()
             popen.assert_called_once()  # the approval helper was started
+            flags = popen.call_args.kwargs["creationflags"]
+            # it needs a (hidden) console of its own: with none (DETACHED_PROCESS) every ssh poll it makes
+            # opens a visible terminal window on Windows
+            self.assertTrue(flags & 0x08000000, "CREATE_NO_WINDOW")
+            self.assertFalse(flags & 0x00000008, "must not be DETACHED_PROCESS")
             self.assertTrue(any("Add the lab server" in q for q in asked))  # it asked before touching Claude's file
             self.assertIn("`.mcp.json`", "\n".join(said))  # no claude CLI: it prints the snippet instead
 

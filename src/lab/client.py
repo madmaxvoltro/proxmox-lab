@@ -63,7 +63,10 @@ def run_remote(cfg, args, *, stdin=None, stdout=None, capture=False, tty=False):
     # with a terminal ssh would print "Connection to host closed."; LogLevel=ERROR keeps real errors only
     cmd = remote_argv(cfg, args, tty=tty, extra=["-o", "LogLevel=ERROR"] if tty else None)
     if capture:
-        return subprocess.run(cmd, capture_output=True, text=True, stdin=stdin)
+        # captured calls never need a window of their own: without this, a background helper that has no
+        # console (started detached) makes Windows flash a new terminal for every poll
+        return subprocess.run(cmd, capture_output=True, text=True, stdin=stdin,
+                              creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     return subprocess.run(cmd, stdin=stdin, stdout=stdout)
 
 
