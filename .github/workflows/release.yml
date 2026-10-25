@@ -23,6 +23,8 @@ jobs:
           version="${GITHUB_REF_NAME#v}"
           grep -q "^version = \"${version}\"" pyproject.toml || { echo "pyproject.toml version is not ${version}"; exit 1; }
           grep -q "__version__ = \"${version}\"" src/lab/__init__.py || { echo "src/lab/__init__.py version is not ${version}"; exit 1; }
+      - name: The changelog must have an entry for this version (it becomes the release notes)
+        run: python3 packaging/release_notes.py "$GITHUB_REF_NAME" "$GITHUB_REPOSITORY" > /dev/null
       - run: python -m unittest discover -s tests -t .
 
   client:
@@ -93,28 +95,10 @@ jobs:
           cd assets
           sha256sum project-lab-*.tar.gz lab-windows-* lab-linux-* lab-macos-* > SHA256SUMS
           cat SHA256SUMS
-      - name: Create the release
+      - name: Create the release (the notes are this version's CHANGELOG.md entry plus the install commands)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          cat > notes.md <<'EOF'
-          ## Install
-
-          **Proxmox host** (as root):
-          ```bash
-          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install.sh | bash
-          ```
-
-          **Windows PC** (PowerShell):
-          ```powershell
-          irm https://raw.githubusercontent.com/${{ github.repository }}/main/install.ps1 | iex
-          ```
-
-          **macOS or Linux computer**:
-          ```bash
-          curl -fsSL https://raw.githubusercontent.com/${{ github.repository }}/main/install-client.sh | bash
-          ```
-
-          Every installer checks the download against `SHA256SUMS`. The programs are not code-signed.
-          EOF
-          gh release create "${GITHUB_REF_NAME}" assets/* --title "${GITHUB_REF_NAME}" --generate-notes --notes-file notes.md
+          python3 packaging/release_notes.py "${GITHUB_REF_NAME}" "${GITHUB_REPOSITORY}" > notes.md
+          cat notes.md
+          gh release create "${GITHUB_REF_NAME}" assets/* --title "${GITHUB_REF_NAME}" --notes-file notes.md

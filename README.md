@@ -191,9 +191,9 @@ The full design is in [docs/SPEC.md](docs/SPEC.md) and the feature list in [docs
 | **Everything is logged** | `/var/log/project-lab/mcp-audit.log`, secrets redacted; if the log can't be written the action doesn't run |
 | **Protected projects** | `lab protect <name>`: visible by name only; stop/archive/delete are refused outright through MCP |
 
-> **Letting the AI use root without asking.** Inside a project VM, root can only break that disposable VM, so you may want no popup for it. Add `root_without_approval = true` under `[mcp]` in `/etc/project-lab/config.toml` on the host (default: `false`). It applies to root commands and root file access only: delete, archive, restore, entering other projects and protected projects still ask. Every root use is still written to the audit log and shown in `lab approvals` as granted automatically.
+> **Letting the AI use root without asking.** Inside a project VM, root can only break that disposable VM, so you may want no popup for it. Turn it on with `lab settings` on the host (or set `root_without_approval = true` under `[mcp]` in `/etc/project-lab/config.toml`; default: off). It applies to root commands and root file access only: delete, archive, restore, entering other projects and protected projects still ask. Every root use is still written to the audit log and shown in `lab approvals` as granted automatically.
 
-> **Letting the AI enter your own projects without asking.** A session normally asks before working inside a project it did not create. Projects the AI created are remembered across restarts, so this only matters for older ones or ones you made yourself. To skip the question for projects owned by your own user, set `attach_without_approval = true` under `[mcp]` (default `false`). Protected projects and other users' projects still ask, and each use is logged.
+> **Letting the AI enter your own projects without asking.** A session normally asks before working inside a project it did not create. Projects the AI created are remembered across restarts, so this only matters for older ones or ones you made yourself. To skip the question for projects owned by your own user, turn on `attach_without_approval` in `lab settings` (or under `[mcp]` in the config; default off). Protected projects and other users' projects still ask, and each use is logged.
 
 > **One honest limit.** The approval popup approves *as you*, over your SSH identity. If an AI session also has a shell on your PC (for example Claude Code with its Bash tool) it could run the same commands. Keep `lab` and `ssh` out of any auto-approved command list there. Sessions that only have the MCP tools, like Claude Desktop, cannot approve anything.
 
@@ -207,6 +207,7 @@ The full design is in [docs/SPEC.md](docs/SPEC.md) and the feature list in [docs
 | `setup` | Guided setup of a fresh host; safe to re-run |
 | `init` | Just the storage / network / admin questions |
 | `doctor` | Read-only health and drift checks (storage, DHCP/pool, orphans, credentials) |
+| `settings [list\|get KEY\|set KEY VALUE]` | View and change host settings with an arrow-key menu. Enabling a *special* setting (one that loosens a safety rule) shows a warning box and asks you to confirm, defaulting to No; scripts need `--yes`. Run it as root on the host |
 | `template list \| add \| update \| rm \| check` | Base images (one per distro) |
 | `create NAME [--distro --size --cpu --ram --disk --linked]` | New project VM |
 | `list [--all]`, `status NAME` | See projects (`--all` is admin only) |

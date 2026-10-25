@@ -13,6 +13,8 @@ from pathlib import Path
 from . import __version__, access, distros, doctor as doctor_mod
 from . import config as config_mod
 from . import init as init_mod
+from . import settings as settings_mod
+from . import ui as term_mod
 from . import mcp as mcp_mod
 from . import progress
 from . import setup as setup_mod
@@ -50,6 +52,11 @@ def build_parser() -> argparse.ArgumentParser:
     st_ = sub.add_parser("setup", help="guided setup of a fresh Proxmox host (safe to re-run)")
     st_.add_argument("--skip-template", action="store_true", help="do not offer to build the base image")
     sub.add_parser("doctor", help="read-only health and drift checks")
+    se = sub.add_parser("settings", help="view and change host settings (special ones ask you to confirm)")
+    se.add_argument("action", nargs="?", choices=["list", "get", "set"])
+    se.add_argument("key", nargs="?")
+    se.add_argument("value", nargs="?")
+    se.add_argument("--yes", action="store_true", help="scripts: confirm without asking (needed to enable special settings)")
 
     c = sub.add_parser("create", help="create a project VM")
     c.add_argument("name")
@@ -206,6 +213,29 @@ def cmd_init(ctx):
 def cmd_setup(ctx):
     ui = TerminalPrompter()
     return setup_mod.run(ctx, ui, skip_template=ctx.args.skip_template, config_file=ctx.args.config)
+
+
+def cmd_settings(ctx):
+    a = ctx.args
+    path = a.config or config_mod.config_path()
+    if a.action == "get":
+        s = settings_mod.BY_KEY.get(a.key or "")
+        if s is None:
+            raise UsageError("usage: lab settings get KEY (see `lab settings list`)")
+        print(settings_mod.show(settings_mod.current(ctx.cfg, s)))
+        return 0
+    if a.action == "set":
+        if not a.key or a.value is None:
+            raise UsageError("usage: lab settings set KEY VALUE [--yes]")
+        ui = ScriptedPrompter(assume_yes=a.yes) if a.yes else TerminalPrompter()
+        if a.yes:
+            ui.info = print
+        settings_mod.set_value(ctx.cfg, a.key, a.value, path, ui, assume_yes=a.yes)
+        return 0
+    if a.action == "list" or a.json or not term_mod.interactive():
+        _emit(a, {s.key: settings_mod.current(ctx.cfg, s) for s in settings_mod.SETTINGS}, settings_mod.table(ctx.cfg))
+        return 0
+    return settings_mod.interactive(ctx.cfg, path, TerminalPrompter())
 
 
 def cmd_doctor(ctx):
@@ -435,6 +465,8 @@ def _run(ctx, args) -> int:
         return cmd_setup(ctx)
     elif args.cmd == "doctor":
         return cmd_doctor(ctx)
+    elif args.cmd == "settings":
+        return cmd_settings(ctx)
     elif args.cmd == "template":
         return cmd_template(ctx)
     elif args.cmd == "user":

@@ -2,6 +2,10 @@
 
 ## 0.5.0
 
+- New command `lab settings`: view and change host settings from an arrow-key menu (or `lab settings set KEY VALUE`). Settings that
+  loosen a safety rule are marked special: enabling one shows a warning box and asks you to confirm (default No; scripts need
+  `--yes`). The old config file is kept as `config.toml.bak`.
+- Every release now carries its changelog entry as the release notes, and the release build fails if the entry is missing.
 - Fixed: a project the AI created was forgotten whenever the MCP server process restarted (a reconnect between two prompts
   was enough), so the next prompt asked for approval to "enter" it. The host now remembers AI-created projects (tied to the
   VM id), so a restart no longer matters. Projects made before this version are not in that list.

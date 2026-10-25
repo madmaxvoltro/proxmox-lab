@@ -36,6 +36,6 @@ network: they run against in-memory fakes.
 
 ## Releases
 
-Maintainers: bump `version` in `pyproject.toml` and `src/lab/__init__.py`, update `CHANGELOG.md`, then
+Maintainers: bump `version` in `pyproject.toml` and `src/lab/__init__.py`, write the version's entry in `CHANGELOG.md` (it becomes the release notes, and the release build fails without it), then
 `git tag vX.Y.Z && git push --tags`. The release workflow tests, builds `lab.exe` for x64 and ARM64,
 and publishes the files with a `SHA256SUMS`.
