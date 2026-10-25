@@ -312,6 +312,23 @@ class ApprovalTest(ServerBase):
         self.assertTrue(self.call(s, "lab_exec", name="api", command="ls", root=True)[0])  # used up
         self.assertEqual(self.db.approval_get(aid)["status"], "used")
 
+    def test_root_needs_approval_unless_the_admin_turned_it_off(self):
+        self.assertFalse(self.cfg.mcp.root_without_approval)  # off by default
+        s = self.server()
+        s.attached.add("api")
+        self.assertIn("APPROVAL REQUIRED", self.call(s, "lab_exec", name="api", command="id", root=True)[1]["error"])
+        self.cfg.mcp.root_without_approval = True
+        for tool, extra in (("lab_exec", {"command": "id"}), ("lab_read_file", {"path": "/etc/hostname"}),
+                            ("lab_write_file", {"path": "/etc/motd", "content": "hi"})):
+            err, body = self.call(s, tool, name="api", root=True, **extra)
+            self.assertNotIn("APPROVAL REQUIRED", str(body), tool)  # (the fake VM may not support the file calls)
+        # still logged, as granted automatically
+        rows = self.db.approval_list()
+        for tool in ("lab_exec_root", "lab_read_root", "lab_write_root"):
+            self.assertTrue(any(r["tool"] == tool and "auto" in (r["decided_by"] or "") for r in rows), tool)
+        # the switch covers root only: deleting still asks
+        self.assertIn("APPROVAL REQUIRED", self.call(s, "lab_delete", name="api")[1]["error"])
+
     def test_approval_expires(self):
         s = self.server()
         s.attached.add("api")

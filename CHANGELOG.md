@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.0
+
+- New setting `[mcp] root_without_approval = true` (default `false`): the AI can run commands and read/write files as root
+  inside a project VM without a popup. Delete, archive, restore, other people's projects and protected projects still ask.
+  Each root use is logged and appears in `lab approvals` as granted automatically.
+
 ## 0.3.0
 
 - New look: the installers and the wizards open with a `proxmox-lab` title box and show a tree of steps.

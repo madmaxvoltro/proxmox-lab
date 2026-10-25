@@ -185,11 +185,13 @@ The full design is in [docs/SPEC.md](docs/SPEC.md) and the feature list in [docs
 | | |
 |---|---|
 | **AI can** | list its projects, create VMs within your caps, run commands and read/write files **inside** project VMs, start/stop them |
-| **AI needs your click for** | delete, archive, restore · any command or file access **as root** · entering a project it didn't create · creating something bigger than the caps · any access to a *protected* project |
+| **AI needs your click for** | delete, archive, restore · any command or file access **as root** (unless you turn that off, see below) · entering a project it didn't create · creating something bigger than the caps · any access to a *protected* project |
 | **AI can never** | get a shell on the Proxmox host, run raw `qm`, approve its own requests, change disks or the bridge, see the Tailscale key |
 | **Approvals are** | tied to the exact action and arguments, single-use, and expire after 10 minutes |
 | **Everything is logged** | `/var/log/project-lab/mcp-audit.log`, secrets redacted; if the log can't be written the action doesn't run |
 | **Protected projects** | `lab protect <name>`: visible by name only; stop/archive/delete are refused outright through MCP |
+
+> **Letting the AI use root without asking.** Inside a project VM, root can only break that disposable VM, so you may want no popup for it. Add `root_without_approval = true` under `[mcp]` in `/etc/project-lab/config.toml` on the host (default: `false`). It applies to root commands and root file access only: delete, archive, restore, entering other projects and protected projects still ask. Every root use is still written to the audit log and shown in `lab approvals` as granted automatically.
 
 > **One honest limit.** The approval popup approves *as you*, over your SSH identity. If an AI session also has a shell on your PC (for example Claude Code with its Bash tool) it could run the same commands. Keep `lab` and `ssh` out of any auto-approved command list there. Sessions that only have the MCP tools, like Claude Desktop, cannot approve anything.
 

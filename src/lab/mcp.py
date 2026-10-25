@@ -27,6 +27,7 @@ INSTRUCTIONS = (
     "created or been attached to, oversized creates) need the human's approval: if a call says "
     "APPROVAL REQUIRED, tell the user the approval ID and wait; never try to work around it. "
     "Protected projects can only be read about, never changed.")
+ROOT_TOOLS = ("lab_exec_root", "lab_read_root", "lab_write_root")
 DESTRUCTIVE = ("lab_stop", "lab_restart", "lab_archive", "lab_restore", "lab_delete")
 
 
@@ -212,6 +213,11 @@ class McpServer:
 
     def _approve(self, tool: str, project, args: dict, plan: str) -> None:
         """Return only if a human approved exactly this action; otherwise raise."""
+        if tool in ROOT_TOOLS and self.cfg.mcp.root_without_approval:
+            # the admin chose this in the config: no popup, but every use stays in the approvals log
+            self._approver = "auto (mcp.root_without_approval)"
+            self.approvals.record_granted(tool, project, args, plan, self.session, self._approver)
+            return
         row = self.approvals.take(tool, project, args)
         if row:
             self._approver = row["decided_by"]
@@ -274,7 +280,7 @@ class McpServer:
     def _tools(self):
         L = self.lab
         T = Tool
-        root = {"type": "boolean", "description": "run as root (needs human approval)"}
+        root = {"type": "boolean", "description": "run as root (needs human approval unless the admin set mcp.root_without_approval)"}
 
         def t_list(a):
             rows = L.list(everything=bool(a.get("all")))
