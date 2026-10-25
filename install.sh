@@ -26,11 +26,28 @@ if [ -t 1 ]; then
 else
   B=''; G=''; R=''; Y=''; D=''; N=''
 fi
-step() { printf '\n%s%s%s\n' "$B" "$*" "$N"; }
-ok()   { printf '  %s✔%s %s\n' "$G" "$N" "$*"; }
-note() { printf '  %s%s%s\n' "$D" "$*" "$N"; }
-warn() { printf '  %s!%s %s\n' "$Y" "$N" "$*"; }
-die()  { printf '\n%s✘ %s%s\n' "$R" "$*" "$N" >&2; exit 1; }
+C=''; [ -t 1 ] && C=$'\033[36m'
+case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+  *[Uu][Tt][Ff]-8*|*[Uu][Tt][Ff]8*) BAR='│'; BUL='◆'; TICK='✔'; CROSS='✘'; END='└'; HZ='─'; TL='╭'; TR='╮'; BL='╰'; BR='╯' ;;
+  *) BAR='|'; BUL='*'; TICK='+'; CROSS='x'; END='`'; HZ='-'; TL='+'; TR='+'; BL='+'; BR='+' ;;
+esac
+banner() {  # banner SUBTITLE: the title box
+  local sub="$1" w rule='' i pad
+  w=$(( ${#sub} + 4 )); [ "$w" -ge 19 ] || w=19
+  for ((i = 0; i < w; i++)); do rule+="$HZ"; done
+  pad=$(( w - 2 - 11 )); printf -v pad '%*s' "$pad" ''
+  printf '\n  %s%s%s%s\n' "$D" "$TL" "$rule" "$TR$N"
+  printf '  %s%s%s  %s%sproxmox-lab%s%s%s%s%s\n' "$D" "$BAR" "$N" "$B" "$C" "$N" "$pad" "$D" "$BAR" "$N"
+  pad=$(( w - 2 - ${#sub} )); printf -v pad '%*s' "$pad" ''
+  printf '  %s%s%s  %s%s%s%s%s%s%s\n' "$D" "$BAR" "$N" "$D" "$sub" "$N" "$pad" "$D" "$BAR" "$N"
+  printf '  %s%s%s%s\n' "$D" "$BL" "$rule" "$BR$N"
+}
+step() { printf '  %s%s%s\n  %s%s%s %s%s%s\n' "$D" "$BAR" "$N" "$C" "$BUL" "$N" "$B" "$*" "$N"; }
+ok()   { printf '  %s%s%s  %s%s%s %s\n' "$D" "$BAR" "$N" "$G" "$TICK" "$N" "$*"; }
+note() { printf '  %s%s  %s%s\n' "$D" "$BAR" "$*" "$N"; }
+warn() { printf '  %s%s%s  %s!%s %s\n' "$D" "$BAR" "$N" "$Y" "$N" "$*"; }
+done_() { printf '  %s%s%s\n  %s%s%s %s%s%s\n' "$D" "$BAR" "$N" "$D" "$END" "$N" "$B" "$*" "$N"; }
+die()  { printf '\n  %s%s %s%s\n' "$R" "$CROSS" "$*" "$N" >&2; exit 1; }
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -42,7 +59,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-printf '%s\n' "${B}proxmox-lab${N}  disposable project VMs on Proxmox, safe for AI"
+banner "disposable project VMs on Proxmox, safe for AI"
 
 [ "$(id -u)" -eq 0 ] || [ -n "${LAB_NO_ROOT_CHECK:-}" ] || die "please run as root (for example: curl ... | sudo bash)"
 
@@ -122,12 +139,13 @@ if [ -f /etc/project-lab/config.toml ]; then
 fi
 
 if [ "$RUN_SETUP" -eq 0 ]; then
-  printf '\nInstalled. Next, run:  %slab setup%s\n' "$B" "$N"
+  done_ "Installed. Next, run:  lab setup"
   exit 0
 fi
 
 if [ -r /dev/tty ] && : </dev/tty 2>/dev/null; then
-  printf '\nStarting the setup wizard...\n'
+  done_ "Installed. Starting the setup wizard..."
+  export LAB_BANNER_SHOWN=1  # the wizard skips its own title box
   exec "$BIN" setup </dev/tty
 fi
-printf '\nInstalled. There is no terminal for questions here, so run:  %slab setup%s\n' "$B" "$N"
+done_ "Installed. There is no terminal for questions here, so run:  lab setup"

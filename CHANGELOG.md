@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.0
+
+- New look: the installers and the wizards open with a `proxmox-lab` title box and show a tree of steps.
+- `lab init`, `lab setup` and `lab connect` are driven with the keyboard on a real terminal: arrow keys or Tab to
+  move, the selected choice is underlined, Enter to pick; Yes/No questions take left/right, Tab, `y` or `n`.
+  Piped or scripted runs keep the plain numbered questions.
+
 ## 0.2.0
 
 - The client now exists for **macOS and Linux** (x64 and ARM64) as well as Windows, with `install-client.sh`.

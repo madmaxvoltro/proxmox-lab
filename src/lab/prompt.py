@@ -1,5 +1,6 @@
 """Interactive prompts, behind an interface so init is testable and scriptable."""
 
+from . import ui as term
 from .errors import UsageError
 
 
@@ -28,6 +29,9 @@ class TerminalPrompter(Prompter):
         return getpass.getpass(f"{label} (hidden): ").strip()
 
     def choose(self, label, options, default=None):
+        if term.interactive():  # arrow keys / Tab, Enter
+            print()
+            return term.select(label, options, default)
         print(f"\n{label}")
         for i, (value, desc) in enumerate(options, 1):
             print(f"  {i}) {value}" + (f"  - {desc}" if desc else "") + ("  [default]" if value == default else ""))
@@ -40,6 +44,8 @@ class TerminalPrompter(Prompter):
             print("enter a number from the list")
 
     def confirm(self, message, default=False):
+        if term.interactive():
+            return term.confirm(message, default)
         raw = input(f"{message} [{'Y/n' if default else 'y/N'}] ").strip().lower()
         return default if not raw else raw in ("y", "yes")
 

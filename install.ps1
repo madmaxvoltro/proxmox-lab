@@ -24,12 +24,35 @@ $apiUrl = if ($env:LAB_API_URL) { $env:LAB_API_URL } else { "https://api.github.
 $downloadUrl = if ($env:LAB_DOWNLOAD_URL) { $env:LAB_DOWNLOAD_URL } else { "https://github.com/$repo/releases/download" }
 $installDir = Join-Path $env:LOCALAPPDATA 'Programs\lab'
 
-function Step($text) { Write-Host "`n$text" -ForegroundColor White }
-function Ok($text) { Write-Host "  [ok] $text" -ForegroundColor Green }
-function Note($text) { Write-Host "  $text" -ForegroundColor DarkGray }
-function Fail($text) { Write-Host "`n[x] $text" -ForegroundColor Red; throw $text }
+# Look: a title box, then a tree of steps. Glyphs are built from code points so this file stays pure ASCII,
+# and fall back to ASCII in consoles that cannot draw them (legacy conhost).
+$fancy = [bool]($env:WT_SESSION -or $env:TERM_PROGRAM -or $env:ConEmuPID)
+if ($fancy) { try { [Console]::OutputEncoding = [Text.Encoding]::UTF8 } catch { $fancy = $false } }
+if ($fancy) {
+    $g = @{ bar = [char]0x2502; bul = [char]0x25C6; tick = [char]0x2714; cross = [char]0x2718; end = [char]0x2514
+            tl = [char]0x256D; tr = [char]0x256E; bl = [char]0x2570; br = [char]0x256F; hz = [char]0x2500 }
+} else {
+    $g = @{ bar = '|'; bul = '*'; tick = '+'; cross = 'x'; end = '`'; tl = '+'; tr = '+'; bl = '+'; br = '+'; hz = '-' }
+}
+function Banner($subtitle) {
+    $w = [Math]::Max(15, $subtitle.Length) + 4
+    $rule = [string]$g.hz * $w
+    $side = if ($fancy) { [string][char]0x2502 } else { '|' }
+    Write-Host ""
+    Write-Host "  $($g.tl)$rule$($g.tr)" -ForegroundColor DarkGray
+    Write-Host "  $side  " -NoNewline -ForegroundColor DarkGray; Write-Host ('proxmox-lab'.PadRight($w - 2)) -NoNewline -ForegroundColor Cyan; Write-Host $side -ForegroundColor DarkGray
+    Write-Host "  $side  " -NoNewline -ForegroundColor DarkGray; Write-Host ($subtitle.PadRight($w - 2)) -NoNewline -ForegroundColor Gray; Write-Host $side -ForegroundColor DarkGray
+    Write-Host "  $($g.bl)$rule$($g.br)" -ForegroundColor DarkGray
+}
+function Bar() { Write-Host "  $($g.bar)  " -NoNewline -ForegroundColor DarkGray }
+function Step($text) { Write-Host "  $($g.bar)" -ForegroundColor DarkGray; Write-Host "  $($g.bul) " -NoNewline -ForegroundColor Cyan; Write-Host $text -ForegroundColor White }
+function Ok($text) { Bar; Write-Host "$($g.tick) " -NoNewline -ForegroundColor Green; Write-Host $text }
+function Note($text) { Bar; Write-Host $text -ForegroundColor DarkGray }
+function Warn($text) { Bar; Write-Host "! " -NoNewline -ForegroundColor Yellow; Write-Host $text -ForegroundColor Yellow }
+function Done($text) { Write-Host "  $($g.bar)" -ForegroundColor DarkGray; Write-Host "  $($g.end) " -NoNewline -ForegroundColor DarkGray; Write-Host $text -ForegroundColor White }
+function Fail($text) { Write-Host ""; Write-Host "  $($g.cross) $text" -ForegroundColor Red; throw $text }
 
-Write-Host "proxmox-lab  disposable project VMs on Proxmox, safe for AI" -ForegroundColor White
+Banner 'disposable project VMs on Proxmox, safe for AI'
 
 Step 'Checking this PC'
 $osArch = try { [string][System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture } catch { $env:PROCESSOR_ARCHITECTURE }
@@ -37,9 +60,9 @@ $arch = if ($osArch -match 'Arm64|ARM64') { 'arm64' } else { 'x64' }
 Ok "Windows $([Environment]::OSVersion.Version) ($arch)"
 $ssh = Get-Command ssh.exe -ErrorAction SilentlyContinue
 if ($ssh) { Ok "OpenSSH client found" }
-else { Write-Host "  [!] The OpenSSH client is missing. Install it: Settings > System > Optional features > OpenSSH Client." -ForegroundColor Yellow }
+else { Warn "The OpenSSH client is missing. Install it: Settings > System > Optional features > OpenSSH Client." }
 $tailscale = Get-Command tailscale.exe -ErrorAction SilentlyContinue
-if (-not $tailscale) { Write-Host "  [!] Tailscale was not found on this PC. Install it from https://tailscale.com/download and sign in." -ForegroundColor Yellow }
+if (-not $tailscale) { Warn "Tailscale was not found on this PC. Install it from https://tailscale.com/download and sign in." }
 else { Ok "Tailscale found" }
 
 Step 'Finding the release'
@@ -82,12 +105,13 @@ finally {
     Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
 }
 
-& (Join-Path $installDir 'lab.exe') version
+& (Join-Path $installDir 'lab.exe') version | ForEach-Object { Ok $_ }
 if ($env:LAB_NO_CONNECT) {
-    Write-Host "`nInstalled. Next, run:  lab connect" -ForegroundColor White
+    Done "Installed. Next, run:  lab connect"
     return
 }
-Write-Host ""
+Done "Installed. Starting the connect wizard..."
+$env:LAB_BANNER_SHOWN = '1'   # the wizard skips its own title box
 $connectArgs = @()
 if ($env:LAB_HOST) { $connectArgs += $env:LAB_HOST }
 & (Join-Path $installDir 'lab.exe') connect @connectArgs

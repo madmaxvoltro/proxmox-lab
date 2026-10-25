@@ -11,6 +11,7 @@ from . import config as config_mod
 from . import doctor as doctor_mod
 from . import init as init_mod
 from .errors import LabError, PreconditionError
+from . import ui as term
 from .prompt import Prompter
 from .tailscale import Tailscale
 
@@ -31,7 +32,7 @@ def _mark(ok: bool) -> str:
 
 
 def step(ui: Prompter, n: int, title: str) -> None:
-    ui.info(f"\n[{n}/{TOTAL}] {title}")
+    ui.info(term.step_title(f"{title}  [{n}/{TOTAL}]"))
 
 
 def _is_root() -> bool:
@@ -95,8 +96,8 @@ def credential_step(ctx, ui: Prompter, owner: str) -> bool:
 
 
 def run(ctx, ui: Prompter, *, skip_template: bool = False, config_file: str | None = None) -> int:
-    ui.info("lab setup: this takes a fresh Proxmox host to a working lab.\n"
-            "Re-running it is safe; finished steps are detected and skipped.")
+    ui.info(term.banner(subtitle="set up this Proxmox host"))
+    ui.info("\n  Takes a fresh host to a working lab. Re-running it is safe; finished steps are skipped.")
 
     step(ui, 1, "Checking the host")
     problems = preflight(ctx, ui)

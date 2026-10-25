@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 from . import client, watch
+from . import ui as term
 from .client import ClientError
 
 BACKUP_SUFFIX = ".lab-backup"
@@ -106,10 +107,13 @@ def explain_failure(text: str) -> str:
 
 def run(argv: list, *, ask=input, say=print, env=os.environ, load=client.load_config, save=client.save_config) -> int:
     def yes(question: str, default: bool = True) -> bool:
+        if ask is input and term.interactive():
+            return term.confirm(question, default)
         raw = ask(f"{question} [{'Y/n' if default else 'y/N'}] ").strip().lower()
         return default if not raw else raw in ("y", "yes")
 
-    say("lab connect: wires this PC to your Proxmox host. Re-running it is safe.\n")
+    say(term.banner(subtitle="connect this computer to your Proxmox host"))
+    say("\n  Re-running it is safe.\n")
     host = next((a for a in argv if not a.startswith("-")), None)
     ssh_user = argv[argv.index("--user") + 1] if "--user" in argv else None
     try:
