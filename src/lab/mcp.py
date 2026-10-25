@@ -266,6 +266,16 @@ class McpServer:
             return
         if name in self.attached:
             return
+        if row["vmid"] is not None and self.db.ai_created_has(name, row["vmid"], self.caller.name):
+            self.attached.add(name)  # an earlier AI session of this user made it (this server restarted since)
+            return
+        if self.cfg.mcp.attach_without_approval and row["owner"] == self.caller.name:
+            # the admin chose this: sessions may enter their own user's projects; still logged
+            self._approver = "auto (mcp.attach_without_approval)"
+            self.approvals.record_granted("enter", name, {"session": self.session},
+                                          f"Enter own project '{name}'", self.session, self._approver)
+            self.attached.add(name)
+            return
         self._approve("enter", name, {"session": self.session},
                       f"Let this AI session work inside project '{name}' (owner {row['owner']}): run commands, "
                       "read and write files, start and stop it. It did not create it and it was not attached.")
@@ -311,6 +321,9 @@ class McpServer:
             res = L.create(a["name"], distro=req.get("distro"), size=a.get("size"), cpu=req.get("cpu"),
                            ram=req.get("ram"), disk=req.get("disk"), clone_mode=req.get("clone_mode"))
             self.attached.add(a["name"])
+            made = self.db.get_project(a["name"])
+            if made and made["vmid"] is not None:  # remembered beyond this process (a restart must not forget it)
+                self.db.ai_created_add(a["name"], made["vmid"], self.caller.name)
             return res
 
         def lifecycle(fn, tool):
@@ -413,7 +426,7 @@ class McpServer:
               {"name": NAME, "distro": _str("e.g. ubuntu-24.04"), "size": _str("small|medium|large"),
                "cpu": {"type": "integer", "description": "vCPUs"}, "ram": _str("e.g. 4G"), "disk": _str("e.g. 64G"),
                "clone_mode": _str("full|linked")}, ["name"], t_create),
-            T("lab_attach", "Attach this session to a project it did not create (needs human approval).",
+            T("lab_attach", "Attach this session to a project it did not create (needs human approval unless the admin set mcp.attach_without_approval).",
               {"name": NAME}, ["name"], t_attach),
             T("lab_start", "Start a project VM.", {"name": NAME}, ["name"], lifecycle(L.start, "lab_start")),
             T("lab_stop", "Gracefully stop a project VM.", {"name": NAME}, ["name"], lifecycle(L.stop, "lab_stop")),

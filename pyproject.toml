@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "project-lab"
-version = "0.4.1"
+version = "0.5.0"
 description = "Disposable project VMs on Proxmox with Tailscale, verified archives and an approval-gated MCP server for Claude"
 requires-python = ">=3.11"
 dependencies = []

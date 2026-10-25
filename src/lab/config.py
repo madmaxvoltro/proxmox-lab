@@ -103,6 +103,7 @@ class MCP:
     approval_ttl_s: int = 600
     approval_wait_s: int = 50          # a gated call waits this long for a click when the desktop helper is running
     root_without_approval: bool = False  # true: root commands and root file access in a project run without a popup (still logged)
+    attach_without_approval: bool = False  # true: a session may enter projects owned by its own user without a popup (still logged)
 
 
 @dataclass

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0
+
+- Fixed: a project the AI created was forgotten whenever the MCP server process restarted (a reconnect between two prompts
+  was enough), so the next prompt asked for approval to "enter" it. The host now remembers AI-created projects (tied to the
+  VM id), so a restart no longer matters. Projects made before this version are not in that list.
+- New setting `[mcp] attach_without_approval = true` (default `false`): sessions may enter projects owned by their own user
+  without a popup. Protected projects and other users' projects still ask. Uses are logged.
+
 ## 0.4.1
 
 - Fixed: on Windows, right after `lab connect` the background approval helper made a terminal window pop up every few

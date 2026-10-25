@@ -329,6 +329,27 @@ class ApprovalTest(ServerBase):
         # the switch covers root only: deleting still asks
         self.assertIn("APPROVAL REQUIRED", self.call(s, "lab_delete", name="api")[1]["error"])
 
+    def test_a_restarted_server_still_knows_what_the_ai_created(self):
+        first = self.server()
+        self.assertFalse(self.call(first, "lab_create", name="web2")[0])
+        again = self.server()  # a new process: its in-memory attached set is empty
+        self.assertNotIn("web2", again.attached)
+        self.assertFalse(self.call(again, "lab_exec", name="web2", command="id")[0])  # no approval needed
+        # a project made by someone other than the AI still asks, and so does one recreated under the same name
+        self.assertIn("APPROVAL REQUIRED", self.call(again, "lab_attach", name="api")[1]["error"])
+        self.db.conn.execute("UPDATE projects SET vmid = vmid + 500 WHERE name='web2'")
+        self.assertIn("APPROVAL REQUIRED", self.call(self.server(), "lab_exec", name="web2", command="id")[1]["error"])
+
+    def test_entering_own_projects_without_approval_when_the_admin_allows_it(self):
+        s = self.server()
+        self.assertFalse(self.cfg.mcp.attach_without_approval)  # off by default
+        self.assertIn("APPROVAL REQUIRED", self.call(s, "lab_attach", name="api")[1]["error"])
+        self.cfg.mcp.attach_without_approval = True
+        self.assertEqual(self.call(s, "lab_attach", name="api")[1], {"attached": "api"})
+        self.assertTrue(any(r["tool"] == "enter" and "auto" in (r["decided_by"] or "") for r in self.db.approval_list()))
+        # root is a separate switch, and protected projects still always ask
+        self.assertIn("APPROVAL REQUIRED", self.call(s, "lab_exec", name="api", command="id", root=True)[1]["error"])
+
     def test_approval_expires(self):
         s = self.server()
         s.attached.add("api")

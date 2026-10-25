@@ -100,6 +100,18 @@ _MIGRATIONS = [
         PRIMARY KEY (name, user)
     );
     """,
+    # v5: projects an AI session created. The MCP server forgets what it created when its process restarts, so
+    # this is how a later session of the same user recognises them. Tied to the VM id: a project that was
+    # deleted and made again by someone else does not match.
+    """
+    CREATE TABLE ai_created (
+        name       TEXT NOT NULL,
+        vmid       INTEGER NOT NULL,
+        user       TEXT NOT NULL,
+        created_at REAL NOT NULL,
+        PRIMARY KEY (name, vmid)
+    );
+    """,
 ]
 
 
@@ -314,6 +326,14 @@ class DB:
                 "UPDATE approvals SET status='used', used_at=? WHERE id=? AND status='approved' AND expires_at>?",
                 (now, id, now))
             return cur.rowcount == 1
+
+    def ai_created_add(self, name: str, vmid: int, user: str) -> None:
+        self.conn.execute("INSERT OR REPLACE INTO ai_created (name, vmid, user, created_at) VALUES (?,?,?,?)",
+                          (name, vmid, user, _now()))
+
+    def ai_created_has(self, name: str, vmid: int, user: str) -> bool:
+        return self.conn.execute("SELECT 1 FROM ai_created WHERE name=? AND vmid=? AND user=?",
+                                 (name, vmid, user)).fetchone() is not None
 
     def get_journal(self, jid: int):
         return self.conn.execute("SELECT * FROM journal WHERE id=?", (jid,)).fetchone()

@@ -193,6 +193,8 @@ The full design is in [docs/SPEC.md](docs/SPEC.md) and the feature list in [docs
 
 > **Letting the AI use root without asking.** Inside a project VM, root can only break that disposable VM, so you may want no popup for it. Add `root_without_approval = true` under `[mcp]` in `/etc/project-lab/config.toml` on the host (default: `false`). It applies to root commands and root file access only: delete, archive, restore, entering other projects and protected projects still ask. Every root use is still written to the audit log and shown in `lab approvals` as granted automatically.
 
+> **Letting the AI enter your own projects without asking.** A session normally asks before working inside a project it did not create. Projects the AI created are remembered across restarts, so this only matters for older ones or ones you made yourself. To skip the question for projects owned by your own user, set `attach_without_approval = true` under `[mcp]` (default `false`). Protected projects and other users' projects still ask, and each use is logged.
+
 > **One honest limit.** The approval popup approves *as you*, over your SSH identity. If an AI session also has a shell on your PC (for example Claude Code with its Bash tool) it could run the same commands. Keep `lab` and `ssh` out of any auto-approved command list there. Sessions that only have the MCP tools, like Claude Desktop, cannot approve anything.
 
 ## Commands
